@@ -11,6 +11,7 @@ Class AI is an AI-powered classroom monitoring application that uses artificial 
 - **Animation:** Three.js (CDN-loaded, shader-based)
 - **Package Manager:** npm
 - **Node Structure:** `src/` directory with `@/*` import alias
+- **Repository:** https://github.com/AM-iSMAIL/ai-class-monitoring-v2
 
 ## Architecture & Core Decisions
 - **Dark Mode First:** The app uses dark theme by default (`.dark` class on `<html>`)
