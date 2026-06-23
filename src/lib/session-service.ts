@@ -303,3 +303,13 @@ export const endSession = async (sessionCode: string): Promise<void> => {
     throw error
   }
 }
+
+// 8. Sync classroom progress (Teacher to Students)
+export const syncClassroomProgress = async (sessionCode: string, currentTopicIndex: number): Promise<void> => {
+  try {
+    const sessionRef = doc(db, "sessions", sessionCode.trim().toUpperCase())
+    await updateDoc(sessionRef, { currentTopicIndex })
+  } catch (error) {
+    console.error("Error syncing classroom progress:", error)
+  }
+}

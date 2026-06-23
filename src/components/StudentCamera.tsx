@@ -80,9 +80,14 @@ export default function StudentCamera({ sessionCode, studentId, enabled, isGridM
 
   if (denied) {
     return (
-      <div className="fixed bottom-4 left-4 z-50 bg-rose-500/10 border border-rose-500/20 rounded-xl p-3 text-xs text-rose-400 max-w-xs">
-        <p className="font-semibold">Camera access required</p>
-        <p className="text-rose-400/70 mt-1">Focus tracking disabled. Enable camera in settings.</p>
+      <div className="absolute inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-rose-500/10 backdrop-blur-md border border-rose-500/20 rounded-xl p-4 text-xs text-rose-400 text-center max-w-xs shadow-2xl">
+          <p className="font-bold text-sm mb-1 text-rose-300">Camera Blocked</p>
+          <p className="text-rose-400/80 mb-2">Focus tracking is disabled.</p>
+          <p className="text-rose-400/90 font-medium bg-rose-500/20 p-2 rounded-lg text-[10px] leading-relaxed">
+            If you opened this link from <b>WhatsApp</b> or <b>Instagram</b>, your camera is blocked by the app. Please tap the menu (⋮) and select <b>"Open in Chrome/Safari"</b>.
+          </p>
+        </div>
       </div>
     );
   }

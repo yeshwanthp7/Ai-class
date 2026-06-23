@@ -30,7 +30,7 @@ import {
 import { getFile } from "@/lib/fileStorage"
 import { extractPDFPages } from "@/lib/pdfParser"
 import StudentCamera from "@/components/StudentCamera"
-import { subscribeToStudents } from "@/lib/session-service"
+import { subscribeToStudents, subscribeToSession, syncClassroomProgress } from "@/lib/session-service"
 
 /* ─── MOCK DATA ─── */
 
@@ -265,6 +265,7 @@ export default function LiveClassroomPage() {
       if (next < items.length) {
         addToast(isPdfMode ? `Moving to Page ${next + 1}` : `Moving to Topic ${next + 1}`)
         setActiveTopicIdx(next)
+        syncClassroomProgress(sessionCode, next)
         setTimeout(() => runTopicSpeech(next), 2000)
       } else {
         speakText("That concludes our topics for today. Feel free to review the materials and ask any remaining questions.")
@@ -292,6 +293,23 @@ export default function LiveClassroomPage() {
     const i = setInterval(() => setElapsedSeconds((s) => s + 1), 1000)
     return () => clearInterval(i)
   }, [hasEntered])
+
+  /* ─── CLASSROOM SYNC ─── */
+  useEffect(() => {
+    if (!hasEntered || !sessionCode) return
+    const unsubscribe = subscribeToSession(
+      sessionCode,
+      (updated) => {
+        if (!updated) return;
+        // Sync topic for students
+        if (!isTeacher && updated.currentTopicIndex !== undefined && updated.currentTopicIndex !== activeTopicIdx) {
+          setActiveTopicIdx(updated.currentTopicIndex)
+        }
+      },
+      (err) => console.error("Session sync error:", err)
+    )
+    return () => unsubscribe()
+  }, [hasEntered, sessionCode, isTeacher, activeTopicIdx])
 
   /* ─── STUDENTS SIM ─── */
   useEffect(() => {
