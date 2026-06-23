@@ -233,12 +233,6 @@ export default function SessionPage() {
   // 5. Watch for "Active" session state to trigger classroom transition
   useEffect(() => {
     if (session?.status === "Active" && !isClassroomActive && !isTransitioning) {
-      // Trigger chime and transition overlays
-      if (!isTeacher && !hasPlayedChime) {
-        playChime()
-        setHasPlayedChime(true)
-      }
-
       setIsTransitioning(true)
       const timeout = setTimeout(() => {
         setIsTransitioning(false);
@@ -250,7 +244,7 @@ export default function SessionPage() {
 
       return () => clearTimeout(timeout)
     }
-  }, [session, isClassroomActive, isTransitioning, isTeacher, hasPlayedChime, router, sessionCode])
+  }, [session, isClassroomActive, isTransitioning, router, sessionCode])
 
   // 6. Student view: Rotate subtitle text
   useEffect(() => {

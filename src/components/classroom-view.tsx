@@ -102,6 +102,7 @@ export default function ClassroomView({
   const [isRecording, setIsRecording] = useState(false)
   const [screenSharing, setScreenSharing] = useState(false)
   const [whiteboardActive, setWhiteboardActive] = useState(false)
+  const [hasEntered, setHasEntered] = useState(false)
 
   // Timer & Topic Progress
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
@@ -145,17 +146,50 @@ export default function ClassroomView({
 
   const chatBottomRef = useRef<HTMLDivElement>(null)
 
+  // Autoplay Web Audio API start chime
+  const playChime = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const osc1 = ctx.createOscillator()
+      const osc2 = ctx.createOscillator()
+      const gainNode = ctx.createGain()
+      
+      osc1.type = "sine"
+      osc1.frequency.setValueAtTime(587.33, ctx.currentTime) // D5
+      osc1.frequency.exponentialRampToValueAtTime(880.00, ctx.currentTime + 0.3) // A5
+      
+      osc2.type = "sine"
+      osc2.frequency.setValueAtTime(440.00, ctx.currentTime) // A4
+      osc2.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.3) // E5
+      
+      gainNode.gain.setValueAtTime(0.20, ctx.currentTime)
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2)
+      
+      osc1.connect(gainNode)
+      osc2.connect(gainNode)
+      gainNode.connect(ctx.destination)
+      
+      osc1.start()
+      osc2.start()
+      osc1.stop(ctx.currentTime + 1.2)
+      osc2.stop(ctx.currentTime + 1.2)
+    } catch (e) {
+      console.warn("AudioContext block:", e)
+    }
+  }
+
   // 1. Timer ticking
   useEffect(() => {
+    if (!hasEntered) return
     const interval = setInterval(() => {
       setElapsedSeconds((prev) => prev + 1)
     }, 1000)
     return () => clearInterval(interval)
-  }, [])
+  }, [hasEntered])
 
   // 2. AI Subtitle & Topic progression (every 7s, unless paused or in human mode)
   useEffect(() => {
-    if (teachingMode !== "AI") return
+    if (!hasEntered || teachingMode !== "AI") return
     const interval = setInterval(() => {
       setSubIndex((prev) => {
         const next = (prev + 1) % AI_LOBBY_SUBTITLES.length
@@ -170,10 +204,11 @@ export default function ClassroomView({
       })
     }, 7000)
     return () => clearInterval(interval)
-  }, [teachingMode, activeTopicIdx])
+  }, [hasEntered, teachingMode, activeTopicIdx])
 
   // 3. Populate and update student focus telemetry
   useEffect(() => {
+    if (!hasEntered) return
     const simulateFocus = () => {
       const updated = studentsList.map((st) => {
         const score = Math.floor(Math.random() * 45) + 55 // 55% - 100%
@@ -242,7 +277,7 @@ export default function ClassroomView({
     simulateFocus()
     const interval = setInterval(simulateFocus, 6000)
     return () => clearInterval(interval)
-  }, [studentsList])
+  }, [hasEntered, studentsList])
 
   // 4. Keyboard Shortcuts
   useEffect(() => {
@@ -390,6 +425,38 @@ export default function ClassroomView({
   return (
     <div className="fixed inset-0 bg-[#070708] text-white flex flex-col font-sans antialiased overflow-hidden select-none z-50 h-screen w-screen">
       
+      {/* Start Class Overlay to satisfy browser autoplay policy */}
+      {!hasEntered && (
+        <div className="fixed inset-0 bg-[#0A0A0C] z-[99] flex flex-col items-center justify-center text-center p-6 select-none">
+          <div className="space-y-6 max-w-sm mx-auto animate-scaleUp">
+            {/* Animated Logo */}
+            <div className="h-16 w-16 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-violet-600 flex items-center justify-center border border-purple-400/25 mx-auto shadow-[0_0_30px_rgba(147,51,234,0.3)]">
+              <Brain className="h-8 w-8 text-white" />
+            </div>
+            
+            <div className="space-y-2">
+              <h2 className="text-xl font-black tracking-tight text-white">Class is ready</h2>
+              <p className="text-xs text-white/40 leading-relaxed">
+                Connect your audio devices and click below to enter the live session room.
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                playChime();
+                if (teachingMode === "AI") {
+                  triggerAudioSpeech("Welcome back to ClassAI. Today, we are studying Thermodynamics.");
+                }
+                setHasEntered(true);
+              }}
+              className="w-full py-4 px-6 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black uppercase tracking-wider transition-all duration-300 shadow-lg shadow-purple-600/20 active:scale-[0.98] cursor-pointer"
+            >
+              Enter Classroom
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Waveform Keyframes */}
       <style>{`
         @keyframes waveform {
