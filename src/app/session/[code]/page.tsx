@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import {
   Mic,
   MicOff,
@@ -66,6 +66,7 @@ const getMockAIScriptForTopic = (topic: string) => {
 
 export default function SessionPage() {
   const params = useParams()
+  const router = useRouter()
   const sessionCode = (params.code as string).toUpperCase()
 
   // Authentication & Role
@@ -240,13 +241,16 @@ export default function SessionPage() {
 
       setIsTransitioning(true)
       const timeout = setTimeout(() => {
-        setIsTransitioning(false)
-        setIsClassroomActive(true)
+        setIsTransitioning(false);
+        setIsClassroomActive(true);
+        console.log("Transition complete");
+        console.log("Navigating to classroom");
+        router.push(`/classroom/${sessionCode.toLowerCase()}`);
       }, 3000) // 3-second transition ripple
 
       return () => clearTimeout(timeout)
     }
-  }, [session, isClassroomActive, isTransitioning, isTeacher, hasPlayedChime])
+  }, [session, isClassroomActive, isTransitioning, isTeacher, hasPlayedChime, router, sessionCode])
 
   // 6. Student view: Rotate subtitle text
   useEffect(() => {
