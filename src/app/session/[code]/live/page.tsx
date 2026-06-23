@@ -366,11 +366,15 @@ export default function LiveClassroomPage() {
       peer.on('call', (call: any) => {
         console.log("Incoming call from:", call.peer);
         
-        // Wait for our local stream to be ready before answering
+        let attempts = 0;
         const checkStreamAndAnswer = () => {
           if (localStreamRef.current) {
             call.answer(localStreamRef.current);
+          } else if (attempts >= 10) {
+            console.log("Answering call without stream (camera took too long or denied)");
+            call.answer(undefined);
           } else {
+            attempts++;
             setTimeout(checkStreamAndAnswer, 500);
           }
         };
@@ -662,10 +666,6 @@ export default function LiveClassroomPage() {
                 </div>
                 <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-medium text-white shadow-black drop-shadow-md z-10">
                   {isTeacher ? "Teacher (You)" : "You"}
-                </div>
-                <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-[#0a0a0f]/80 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-mono text-white/80 z-10 gap-1.5">
-                  <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${localMetrics.status === "focused" ? "bg-emerald-500" : localMetrics.status === "distracted" ? "bg-amber-500" : localMetrics.status === "away" ? "bg-rose-500" : "bg-gray-500"}`} />
-                  {Math.round(localMetrics.score)}%
                 </div>
               </div>
 
