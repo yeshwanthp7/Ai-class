@@ -10,9 +10,10 @@ interface Props {
   enabled: boolean;
   isGridMode?: boolean;
   onLocalFocusUpdate?: (metrics: { score: number; status: "focused" | "distracted" | "away" | "offline" }) => void;
+  onStreamReady?: (stream: MediaStream) => void;
 }
 
-export default function StudentCamera({ sessionCode, studentId, enabled, isGridMode, onLocalFocusUpdate }: Props) {
+export default function StudentCamera({ sessionCode, studentId, enabled, isGridMode, onLocalFocusUpdate, onStreamReady }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [denied, setDenied] = useState(false);
   const [active, setActive] = useState(false);
@@ -45,6 +46,7 @@ export default function StudentCamera({ sessionCode, studentId, enabled, isGridM
         videoRef.current.srcObject = stream;
         setActive(true);
         console.log("Camera started successfully");
+        if (onStreamReady) onStreamReady(stream);
       } catch (err) {
         console.error("Camera failed:", err);
         setDenied(true);

@@ -87,6 +87,10 @@ export default function LiveClassroomPage() {
   const [students, setStudents] = useState<any[]>([])
   const [classFocus, setClassFocus] = useState(0)
   const [localMetrics, setLocalMetrics] = useState<{score: number, status: string}>({score: 0, status: "offline"})
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null)
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({})
+  const peerRef = useRef<any>(null)
+  const callsRef = useRef<Record<string, any>>({})
 
   const [chatInput, setChatInput] = useState("")
   const [isAnswering, setIsAnswering] = useState(false)
@@ -328,6 +332,73 @@ export default function LiveClassroomPage() {
     )
     return () => unsubscribe()
   }, [hasEntered, sessionCode])
+
+  /* ─── WebRTC PEERJS INIT ─── */
+  useEffect(() => {
+    if (!hasEntered || !studentId) return;
+
+    let peer: any;
+    const initPeer = async () => {
+      const { Peer } = await import('peerjs');
+      peer = new Peer(studentId, {
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+          ]
+        }
+      });
+      peerRef.current = peer;
+
+      peer.on('open', (id: string) => {
+        console.log("PeerJS Connected. ID:", id);
+      });
+
+      peer.on('call', (call: any) => {
+        console.log("Incoming call from:", call.peer);
+        call.answer(localStream || undefined);
+        
+        call.on('stream', (remoteStream: MediaStream) => {
+          console.log("Received stream from caller:", call.peer);
+          setRemoteStreams(prev => ({ ...prev, [call.peer]: remoteStream }));
+        });
+        callsRef.current[call.peer] = call;
+      });
+
+      peer.on('error', (err: any) => {
+        console.error("PeerJS Error:", err);
+      });
+    };
+    initPeer();
+
+    return () => {
+      if (peer) peer.destroy();
+    };
+  }, [hasEntered, studentId, localStream]);
+
+  /* ─── WebRTC AUTO-CALL OUTGOING ─── */
+  useEffect(() => {
+    if (!peerRef.current || !localStream || students.length === 0) return;
+
+    students.forEach((student: any) => {
+      if (student.id !== studentId && !callsRef.current[student.id]) {
+        console.log("Calling newly discovered student:", student.id);
+        const call = peerRef.current.call(student.id, localStream);
+        if (call) {
+          callsRef.current[student.id] = call;
+          call.on('stream', (remoteStream: MediaStream) => {
+             console.log("Received stream from answerer:", student.id);
+             setRemoteStreams(prev => ({ ...prev, [student.id]: remoteStream }));
+          });
+          call.on('error', (err: any) => console.error("Call error:", err));
+        }
+      }
+    });
+  }, [students, localStream, studentId]);
+
+  const handleStreamReady = useCallback((stream: MediaStream) => {
+    setLocalStream(stream);
+  }, []);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }) }, [messages])
   useEffect(() => { transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" }) }, [transcript, pastTranscripts])
@@ -671,6 +742,7 @@ export default function LiveClassroomPage() {
                     enabled={videoOn}
                     isGridMode={true}
                     onLocalFocusUpdate={setLocalMetrics}
+                    onStreamReady={handleStreamReady}
                   />
                 </div>
                 <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-medium text-white shadow-black drop-shadow-md z-10">
@@ -694,11 +766,24 @@ export default function LiveClassroomPage() {
                   "border-gray-600";
                 
                 return (
-                  <div key={student.id} className={`relative aspect-video rounded-xl border ${ringColor} bg-[#14141b] p-4 flex flex-col items-center justify-center gap-3 transition-all duration-500 overflow-hidden`}>
-                    <div className="w-12 h-12 rounded-full bg-[#1e1e2e] border border-white/5 flex items-center justify-center text-sm font-bold text-white/60 relative z-10 shadow-lg">
-                      {student.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
-                    </div>
-                    <span className="text-xs font-medium text-white/60 truncate max-w-full px-1 relative z-10">
+                  <div key={student.id} className={`relative aspect-video rounded-xl border ${ringColor} bg-[#14141b] flex flex-col items-center justify-center transition-all duration-500 overflow-hidden`}>
+                    {remoteStreams[student.id] ? (
+                      <video 
+                        autoPlay 
+                        playsInline 
+                        className="absolute inset-0 w-full h-full object-cover z-0"
+                        ref={node => {
+                          if (node && node.srcObject !== remoteStreams[student.id]) {
+                            node.srcObject = remoteStreams[student.id];
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-[#1e1e2e] border border-white/5 flex items-center justify-center text-sm font-bold text-white/60 relative z-10 shadow-lg">
+                        {student.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
+                      </div>
+                    )}
+                    <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md border border-white/10 text-[10px] font-medium text-white shadow-black drop-shadow-md z-10 truncate max-w-[80%]">
                       {student.name || "Student"}
                     </span>
                     <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-[#0a0a0f]/80 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-mono text-white/80 z-10 gap-1.5">
