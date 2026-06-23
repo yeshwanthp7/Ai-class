@@ -24,6 +24,7 @@ import {
 import DashboardSidebar from "@/components/dashboard-sidebar"
 import { subscribeToAuthChanges } from "@/lib/auth-service"
 import { createSession } from "@/lib/session-service"
+import { saveFile, clearFiles } from "@/lib/fileStorage"
 
 const SUBJECTS = ["Mathematics", "Science", "History", "Computer Science", "Language", "Other"]
 const GRADE_LEVELS = ["Primary", "Middle School", "High School", "University", "Professional"]
@@ -89,18 +90,31 @@ export default function CreateSessionPage() {
     return code
   }
 
-  // Handle Mock file upload
-  const handleMockFileUpload = (type: "ai" | "human") => {
+  // Handle real file upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: "ai" | "human") => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Save to IndexedDB
+    try {
+      await saveFile("session-pdf", file)
+    } catch (err) {
+      console.error("Failed to save file to IndexedDB:", err)
+      alert("Failed to read file. Please try again.")
+      return
+    }
+
+    const sizeStr = (file.size / 1024 / 1024).toFixed(1) + " MB"
     if (type === "ai") {
       setUploadedFile({
-        name: "Introduction_to_Quantum_Mechanics.pdf",
-        size: "4.2 MB",
-        pages: 18,
+        name: file.name,
+        size: sizeStr,
+        pages: 0, // We'll parse pages in the live classroom
       })
     } else {
       setReferenceMaterial({
-        name: "Syllabus_and_Formulas.pdf",
-        size: "1.8 MB",
+        name: file.name,
+        size: sizeStr,
       })
     }
   }
@@ -143,7 +157,11 @@ export default function CreateSessionPage() {
       if (teachingMode) extraSettings.teachingMode = teachingMode
       if (teachingMode === "AI" && aiInstructions) extraSettings.aiInstructions = aiInstructions
       if (teachingMode === "Human") extraSettings.aiAssistants = aiAssistants
-      if (teachingMode === "AI" && aiTab === "upload" && uploadedFile) extraSettings.uploadedFile = uploadedFile
+      if (teachingMode === "AI" && aiTab === "upload" && uploadedFile) {
+        extraSettings.uploadedFile = uploadedFile
+      } else {
+        try { await clearFiles() } catch { /* ignore */ }
+      }
       if (teachingMode === "Human" && referenceMaterial) extraSettings.referenceMaterial = referenceMaterial
 
       const createPromise = createSession(
@@ -675,10 +693,13 @@ export default function CreateSessionPage() {
                         </label>
                         
                         {!uploadedFile ? (
-                          <div
-                            onClick={() => handleMockFileUpload("ai")}
-                            className="border-2 border-dashed border-white/10 hover:border-purple-500/50 bg-[#111111]/50 rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3 group"
-                          >
+                          <label className="border-2 border-dashed border-white/10 hover:border-purple-500/50 bg-[#111111]/50 rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3 group relative">
+                            <input
+                              type="file"
+                              accept=".pdf,.ppt,.pptx"
+                              className="hidden"
+                              onChange={(e) => handleFileUpload(e, "ai")}
+                            />
                             <div className="h-10 w-10 rounded-full bg-white/5 flex items-center justify-center text-white/40 group-hover:text-purple-400 group-hover:bg-purple-500/10 transition-all">
                               <Upload className="h-5 w-5" />
                             </div>
@@ -686,7 +707,7 @@ export default function CreateSessionPage() {
                               <p className="text-xs font-bold text-white">Click to upload lecture slides or syllabus</p>
                               <p className="text-[10px] text-white/30 mt-1">Accepts .ppt, .pptx, .pdf (Max 50MB)</p>
                             </div>
-                          </div>
+                          </label>
                         ) : (
                           <div className="flex items-center justify-between bg-purple-500/5 border border-purple-500/20 p-4 rounded-xl animate-fadeIn">
                             <div className="flex items-center gap-3 overflow-hidden">
@@ -751,15 +772,18 @@ export default function CreateSessionPage() {
                         Reference Material (Optional)
                       </label>
                       {!referenceMaterial ? (
-                        <div
-                          onClick={() => handleMockFileUpload("human")}
-                          className="border border-dashed border-white/10 hover:border-purple-500/50 bg-[#111111]/30 rounded-xl p-4 text-center cursor-pointer transition-all flex items-center justify-center gap-2 group"
-                        >
+                        <label className="border border-dashed border-white/10 hover:border-purple-500/50 bg-[#111111]/30 rounded-xl p-4 text-center cursor-pointer transition-all flex items-center justify-center gap-2 group relative">
+                          <input
+                            type="file"
+                            accept=".pdf,.ppt,.pptx"
+                            className="hidden"
+                            onChange={(e) => handleFileUpload(e, "human")}
+                          />
                           <Upload className="h-4 w-4 text-white/30 group-hover:text-purple-400" />
                           <span className="text-xs text-white/40 group-hover:text-white/60 font-semibold">
                             Upload slides/documents for the AI assistant
                           </span>
-                        </div>
+                        </label>
                       ) : (
                         <div className="flex items-center justify-between bg-white/[0.02] border border-white/5 p-3 rounded-xl animate-fadeIn">
                           <div className="flex items-center gap-2.5 overflow-hidden">

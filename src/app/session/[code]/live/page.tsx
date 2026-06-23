@@ -27,6 +27,9 @@ import {
   VideoOff as CameraOff,
 } from "lucide-react"
 
+import { getFile } from "@/lib/fileStorage"
+import { extractPDFPages } from "@/lib/pdfParser"
+
 /* ─── MOCK DATA ─── */
 
 const MOCK_TOPICS = ["Introduction to Thermodynamics", "The Carnot Cycle", "Concept of Entropy"]
@@ -61,6 +64,10 @@ export default function LiveClassroomPage() {
   const [isTeacher, setIsTeacher] = useState(true)
   const [hasEntered, setHasEntered] = useState(false)
 
+  const [pdfPages, setPdfPages] = useState<string[]>([])
+  const [isPdfMode, setIsPdfMode] = useState(false)
+  const [isParsingPdf, setIsParsingPdf] = useState(true)
+
   const [activeTopicIdx, setActiveTopicIdx] = useState(0)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [micOn, setMicOn] = useState(true)
@@ -89,6 +96,9 @@ export default function LiveClassroomPage() {
   const [classFocus, setClassFocus] = useState(87)
 
   const [chatInput, setChatInput] = useState("")
+  const [isAnswering, setIsAnswering] = useState(false)
+  const isAnsweringRef = useRef(false)
+  const transcriptRef = useRef<string[]>([])
   const [messages, setMessages] = useState<Array<{
     id: string; sender: string; text: string; time: string; isAI: boolean
   }>>([
@@ -115,6 +125,24 @@ export default function LiveClassroomPage() {
       if (mode === "Human") setTeachingMode("Human")
       if (role === "student") setIsTeacher(false)
     } catch { /* keep defaults */ }
+
+    const loadPdf = async () => {
+      try {
+        const file = await getFile("session-pdf")
+        if (file) {
+          const pages = await extractPDFPages(file)
+          if (pages.length > 0) {
+            setPdfPages(pages)
+            setIsPdfMode(true)
+          }
+        }
+      } catch (err) {
+        console.error("PDF load error:", err)
+      } finally {
+        setIsParsingPdf(false)
+      }
+    }
+    loadPdf()
   }, [])
 
   const addToast = useCallback((text: string) => {
@@ -123,57 +151,80 @@ export default function LiveClassroomPage() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000)
   }, [])
 
-  /* ─── CLAUDE API ─── */
-  const teachTopic = useCallback(async (topic: string): Promise<string> => {
+  /* ─── GROQ API ─── */
+  const teachContent = useCallback(async (content: string, isPdf: boolean): Promise<string> => {
+    const systemPrompt = isPdf
+      ? `You are Professor AI. The overall course topic is "${sessionTitle}". Read this slide/page content and explain it to students in simple engaging language. Max 4 sentences. Use examples.`
+      : `You are Professor AI, an engaging teacher. The overall course topic is "${sessionTitle}". Explain this topic in 4-5 sentences. Be clear, use examples, speak naturally as if lecturing a class.`
+    const userPrompt = isPdf ? content : "Teach this topic: " + content
+    
     try {
-      const response = await fetch("/api/claude", {
+      const response = await fetch("/api/groq", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system: "You are Professor AI, an engaging teacher. Explain this topic in 4-5 sentences. Be clear, use examples, speak naturally as if lecturing a class.",
-          message: "Teach this topic: " + topic,
-        }),
+        body: JSON.stringify({ system: systemPrompt, prompt: userPrompt }),
       })
       if (!response.ok) throw new Error(`API ${response.status}`)
       const data = await response.json()
-      return data.content?.[0]?.text || ""
+      
+      if (!data.text) throw new Error("No text in response")
+      return data.text
     } catch (err) {
-      console.warn("Claude API fallback:", err)
-      return `Let's explore ${topic}. This concept is foundational in our field and connects deeply to what we've studied previously. Notice how the principles we discussed earlier apply directly here. Pay attention to the key relationships between variables.`
+      console.error("Groq API Error:", err)
+      return "AI unavailable - check API key"
     }
   }, [])
 
-  /* ─── UNSPLASH IMAGE ─── */
-  const loadTopicImage = useCallback((topic: string) => {
-    const keywords = topic
-      .toLowerCase()
-      .replace(/introduction to|concept of|the /gi, "")
-      .trim()
-      .split(/\s+/)
-      .join(",")
+  /* ─── PEXELS IMAGE ─── */
+  const loadContextImage = useCallback(async (content: string, isPdf: boolean) => {
+    let keywords = ""
+    if (isPdf) {
+      keywords = content.split(/\s+/).slice(0, 5).join(" ")
+    } else {
+      keywords = content
+        .toLowerCase()
+        .replace(/introduction to|concept of|the /gi, "")
+        .trim()
+    }
+
+    console.log('Fetching image for:', keywords)
 
     setImageFading(true)
     setImageLoaded(false)
 
-    // Use the featured endpoint for higher quality images
-    const url = `https://source.unsplash.com/featured/800x500/?${encodeURIComponent(keywords)},science,physics&t=${Date.now()}`
-
-    // Preload
-    const img = new window.Image()
-    img.onload = () => {
-      setTimeout(() => {
-        setTopicImageUrl(url)
-        setImageLoaded(true)
+    try {
+      const res = await fetch(`/api/pexels?query=${encodeURIComponent(keywords)}`)
+      const data = await res.json()
+      console.log('Pexels response:', data.imageUrl)
+      
+      const url = data.imageUrl
+      if (url) {
+        // Preload
+        const img = new window.Image()
+        img.onload = () => {
+          setTimeout(() => {
+            setTopicImageUrl(url)
+            setImageLoaded(true)
+            setImageFading(false)
+          }, 250)
+        }
+        img.onerror = () => {
+          setTopicImageUrl(null)
+          setImageLoaded(false)
+          setImageFading(false)
+        }
+        img.src = url
+      } else {
+        setTopicImageUrl(null)
+        setImageLoaded(false)
         setImageFading(false)
-      }, 250)
-    }
-    img.onerror = () => {
-      // Fallback — no image, show gradient with topic name
+      }
+    } catch (err) {
+      console.error('Pexels failed:', err)
       setTopicImageUrl(null)
       setImageLoaded(false)
       setImageFading(false)
     }
-    img.src = url
   }, [])
 
   /* ─── WEB SPEECH ─── */
@@ -199,29 +250,32 @@ export default function LiveClassroomPage() {
 
   /* ─── AI TEACHING SEQUENCE ─── */
   const runTopicSpeech = useCallback(async (idx: number) => {
-    if (idx >= topics.length) {
+    const items = isPdfMode ? pdfPages : topics
+    if (idx >= items.length) {
       speakText("That concludes our topics for today. Feel free to review the materials and ask any remaining questions.")
       return
     }
-    const topic = topics[idx]
-    loadTopicImage(topic)
+    const currentItem = items[idx]
+    loadContextImage(currentItem, isPdfMode)
     setAiSpeechState("speaking")
-    const explanation = await teachTopic(topic)
+    
+    const explanation = await teachContent(currentItem, isPdfMode)
+    transcriptRef.current.push(explanation)
     setTranscript((prev) => {
       if (prev) setPastTranscripts((old) => [...old, prev])
       return explanation
     })
     speakText(explanation, () => {
       const next = idx + 1
-      if (next < topics.length) {
-        addToast(`Moving to Topic ${next + 1}`)
+      if (next < items.length) {
+        addToast(isPdfMode ? `Moving to Page ${next + 1}` : `Moving to Topic ${next + 1}`)
         setActiveTopicIdx(next)
         setTimeout(() => runTopicSpeech(next), 2000)
       } else {
         speakText("That concludes our topics for today. Feel free to review the materials and ask any remaining questions.")
       }
     })
-  }, [topics, speakText, addToast, teachTopic, loadTopicImage])
+  }, [topics, pdfPages, isPdfMode, speakText, addToast, teachContent, loadContextImage])
 
   /* ─── ENTER CLASSROOM ─── */
   const handleEnterClassroom = useCallback(() => {
@@ -270,23 +324,51 @@ export default function LiveClassroomPage() {
   /* ─── DOUBT ─── */
   const handleSendDoubt = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!chatInput.trim()) return
-    const userMsg = { id: Date.now().toString(), sender: "You", text: chatInput.trim(), time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: false }
-    setMessages((prev) => [...prev, userMsg])
+    if (isAnsweringRef.current || !chatInput.trim()) return
+    isAnsweringRef.current = true
+    setIsAnswering(true)
+    
     const question = chatInput.trim()
+    const userMsg = { id: Date.now().toString(), sender: "You", text: question, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: false }
+    setMessages((prev) => [...prev, userMsg])
     setChatInput("")
+    
     try { window.speechSynthesis.pause(); setAiSpeechState("paused"); addToast("AI paused to answer doubt") } catch { /* ok */ }
+    
+    let answer: string
     try {
-      const res = await fetch("/api/claude", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: "You are Professor AI answering a student's doubt during a live class. Give a clear, concise answer in 2-3 sentences.", message: question }) })
-      let answer: string
-      if (res.ok) { const d = await res.json(); answer = d.content?.[0]?.text || DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)] }
-      else { answer = DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)] }
+      const system = `You are a classroom AI teacher.\nThe student asked you: "${question}"\nAnswer that exact question in 2 sentences max.\nDo not answer a different question.\nDo not say "Great question" or any filler.\nDo not talk about Carnot or unrelated topics\nunless the student specifically asked about it.\nJust answer what was asked.`
+      
+      console.log('Question:', question)
+      console.log('Transcript context:', 'REMOVED FOR DEBUGGING')
+      console.log('Full prompt being sent:', { system, prompt: question })
+
+      const res = await fetch("/api/groq", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ system, prompt: question }) 
+      })
+      if (res.ok) { 
+        const d = await res.json()
+        answer = d.text || DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)] 
+      } else { 
+        answer = DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)] 
+      }
+
       setMessages((prev) => [...prev, { id: (Date.now() + 1).toString(), sender: "Professor AI", text: answer, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: true }])
-      speakText(answer, () => speakText("Great question. Let's continue...", () => runTopicSpeech(activeTopicIdx)))
+      speakText(answer, () => {
+        speakText("Let's continue...", () => runTopicSpeech(activeTopicIdx))
+      })
+
     } catch {
-      const answer = DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)]
+      answer = DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)]
       setMessages((prev) => [...prev, { id: (Date.now() + 1).toString(), sender: "Professor AI", text: answer, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: true }])
-      speakText(answer, () => speakText("Great question. Let's continue...", () => runTopicSpeech(activeTopicIdx)))
+      speakText(answer, () => {
+        speakText("Let's continue...", () => runTopicSpeech(activeTopicIdx))
+      })
+    } finally {
+      isAnsweringRef.current = false
+      setIsAnswering(false)
     }
   }
 
@@ -314,8 +396,10 @@ export default function LiveClassroomPage() {
   }, [hasEntered])
 
   const fmt = (s: number) => `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`
-  const progressPct = topics.length > 0 ? Math.floor(((activeTopicIdx + 1) / topics.length) * 100) : 50
-  const activeTopic = topics[activeTopicIdx] || "Course Topic"
+  const totalItems = isPdfMode ? pdfPages.length : topics.length
+  const progressPct = totalItems > 0 ? Math.floor(((activeTopicIdx + 1) / totalItems) * 100) : 50
+  const activeLabel = isPdfMode ? `Page ${activeTopicIdx + 1} of ${totalItems}` : (topics[activeTopicIdx] || "Course Topic")
+  
   const focusDot = classFocus >= 80 ? "bg-emerald-500" : classFocus >= 65 ? "bg-amber-500" : "bg-rose-500"
   const focusText = classFocus >= 80 ? "text-emerald-400" : classFocus >= 65 ? "text-amber-400" : "text-rose-400"
 
@@ -338,29 +422,30 @@ export default function LiveClassroomPage() {
             </div>
             <div className="space-y-2">
               <h1 className="text-2xl font-black text-white tracking-tight">Ready to begin?</h1>
-              <p className="text-xs text-white/35 leading-relaxed">Your AI-powered classroom is prepared</p>
+              <p className="text-xs text-white/35 leading-relaxed">{isParsingPdf ? "Loading PDF..." : "Your AI-powered classroom is prepared"}</p>
             </div>
           </div>
-          <div className="efd bg-[#111113] border border-white/[0.06] rounded-2xl p-5 space-y-3">
+          <div className="efd bg-[#111113] border border-white/[.06] rounded-2xl p-5 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-black uppercase tracking-[.15em] text-purple-400">Session</span>
               <span className="text-[10px] font-mono font-bold text-white/30 bg-white/[.03] px-2 py-0.5 rounded">{sessionCode}</span>
             </div>
             <h3 className="text-sm font-bold text-white">{sessionTitle}</h3>
-            <p className="text-[11px] text-white/40">{sessionSubject} • {topics.length} topics • {teachingMode} Mode</p>
+            <p className="text-[11px] text-white/40">{sessionSubject} • {isPdfMode ? `${pdfPages.length} Pages` : `${topics.length} topics`} • {teachingMode} Mode</p>
             <div className="flex items-center gap-2 pt-1">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
               <span className="text-[10px] text-emerald-400/80 font-semibold">6 students connected</span>
             </div>
           </div>
-          <button id="enter-classroom-btn" onClick={handleEnterClassroom} className="efd2 w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 rounded-2xl text-sm font-black uppercase text-white tracking-widest transition-all shadow-lg shadow-purple-600/20 active:scale-[.98] cursor-pointer flex items-center justify-center gap-2">
-            <Play className="h-4 w-4 fill-current" /> Enter Classroom
+          <button id="enter-classroom-btn" disabled={isParsingPdf} onClick={handleEnterClassroom} className="efd2 w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 rounded-2xl text-sm font-black uppercase text-white tracking-widest transition-all shadow-lg shadow-purple-600/20 active:scale-[.98] cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+            <Play className="h-4 w-4 fill-current" /> {isParsingPdf ? "Loading..." : "Enter Classroom"}
           </button>
           <p className="text-[10px] text-white/20">Click to enable audio • M=mic V=video H=hand C=chat</p>
         </div>
       </div>
     )
   }
+
 
   /* ═══════════════════════════════════════════
      FULL CLASSROOM — PRODUCTION LAYOUT
@@ -420,8 +505,8 @@ export default function LiveClassroomPage() {
         </div>
         <div className="flex flex-col items-center gap-1.5 w-72">
           <div className="flex items-center gap-2 text-xs text-white/70 font-medium">
-            <span className="text-purple-400 font-bold uppercase text-[9px] tracking-wider">Topic {activeTopicIdx + 1}/{topics.length}:</span>
-            <span className="truncate max-w-[160px]">{activeTopic}</span>
+            <span className="text-purple-400 font-bold uppercase text-[9px] tracking-wider">{isPdfMode ? "PDF Page " : "Topic "} {activeTopicIdx + 1}/{totalItems}:</span>
+            <span className="truncate max-w-[160px]">{activeLabel}</span>
           </div>
           <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
             <div className="h-full bg-gradient-to-r from-purple-600 to-indigo-500 rounded-full transition-all duration-700" style={{ width: `${progressPct}%` }} />
@@ -497,7 +582,7 @@ export default function LiveClassroomPage() {
               <span className={`text-xs font-bold transition-colors duration-300 ${
                 aiSpeechState === "speaking" ? "text-purple-400" : aiSpeechState === "paused" ? "text-amber-400" : "text-white/20"
               }`}>
-                {aiSpeechState === "speaking" ? activeTopic : aiSpeechState === "paused" ? "Paused" : "Waiting to begin..."}
+                {aiSpeechState === "speaking" ? activeLabel : aiSpeechState === "paused" ? "Paused" : "Waiting to begin..."}
               </span>
 
               {/* Transcript — max ~3 lines visible, scroll, gradient fade at bottom */}
@@ -529,7 +614,7 @@ export default function LiveClassroomPage() {
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={topicImageUrl}
-                    alt={activeTopic}
+                    alt={activeLabel}
                     style={{ width: "100%", height: "100%", objectFit: "cover" }}
                     onError={() => { setImageLoaded(false); setTopicImageUrl(null) }}
                   />
@@ -539,16 +624,16 @@ export default function LiveClassroomPage() {
                 /* Gradient fallback — no broken image icon */
                 <div className="absolute inset-0 bg-gradient-to-br from-[#1a1028] via-[#111118] to-[#0d1117] flex items-center justify-center">
                   <div className="text-center space-y-3 px-8">
-                    <h2 className="text-2xl font-black text-white/50 tracking-tight">{activeTopic}</h2>
-                    <p className="text-sm text-white/20">Topic {activeTopicIdx + 1} of {topics.length}</p>
+                    <h2 className="text-2xl font-black text-white/50 tracking-tight">{activeLabel}</h2>
+                    <p className="text-sm text-white/20">{isPdfMode ? "Page" : "Topic"} {activeTopicIdx + 1} of {totalItems}</p>
                   </div>
                 </div>
               )}
             </div>
             {/* Caption bar */}
             <div className="h-11 border-t border-white/[.06] bg-[#0E0E10] flex items-center justify-between px-5 flex-shrink-0 relative z-10">
-              <span className="text-xs font-semibold text-white/50 truncate max-w-[80%]">{activeTopic}</span>
-              <span className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/15 text-[8px] font-black text-purple-400 uppercase tracking-[.12em]">Visual</span>
+              <span className="text-xs font-semibold text-white/50 truncate max-w-[80%]">{activeLabel}</span>
+              <span className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/15 text-[8px] font-black text-purple-400 uppercase tracking-[.12em]">IMAGE</span>
             </div>
           </div>
         </div>
@@ -624,10 +709,11 @@ export default function LiveClassroomPage() {
             <form onSubmit={handleSendDoubt} className="flex gap-2 pt-2.5 border-t border-white/[.06] mt-2 flex-shrink-0">
               <input
                 id="doubt-chat-input" type="text" required value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)} placeholder="Ask a doubt..."
-                className="flex-1 px-3 py-2 bg-[#1A1A1A] border border-white/8 rounded-xl text-xs focus:outline-none focus:border-purple-500/40 text-white placeholder:text-white/15"
+                onChange={(e) => setChatInput(e.target.value)} placeholder={isAnswering ? "Professor is answering..." : "Ask a doubt..."}
+                disabled={isAnswering}
+                className="flex-1 px-3 py-2 bg-[#1A1A1A] border border-white/8 rounded-xl text-xs focus:outline-none focus:border-purple-500/40 text-white placeholder:text-white/15 disabled:opacity-50"
               />
-              <button type="submit" className="px-3 py-2 bg-purple-600 hover:bg-purple-500 rounded-xl text-white transition-colors cursor-pointer">
+              <button type="submit" disabled={isAnswering} className="px-3 py-2 bg-purple-600 hover:bg-purple-500 rounded-xl text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
                 <Send className="h-3.5 w-3.5" />
               </button>
             </form>
