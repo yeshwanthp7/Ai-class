@@ -9,31 +9,28 @@ import {
   Video,
   VideoOff,
   Volume2,
-  Copy,
-  Check,
-  Share2,
   Users,
   Settings,
   Brain,
   User as UserIcon,
-  Trash2,
-  LogOut,
-  RefreshCw,
   AlertCircle,
-  Menu,
-  Eye,
   X,
   Play,
-  CheckCircle,
+  Pause,
   TrendingUp,
   MessageSquare,
-  HelpCircle,
   Hand,
   CornerDownRight,
   Info,
-  Pause,
-  RotateCcw,
   Sparkles,
+  Tv,
+  ScreenShare,
+  Presentation,
+  PenTool,
+  Radio,
+  Clock,
+  LogOut,
+  Maximize2
 } from "lucide-react"
 
 import { Session, Student, endSession } from "@/lib/session-service"
@@ -47,17 +44,41 @@ interface ClassroomViewProps {
   studentName: string | null
 }
 
-const MOCK_SLIDES = [
-  { type: "SLIDE", title: "Overview of Thermodynamics", caption: "Slide 1: Definition of Heat, Work, and Energy conservation" },
-  { type: "IMAGE", title: "Carnot Engine Diagram", caption: "Figure 1.2: Heat input Q1 vs Work output W" },
-  { type: "VIDEO", title: "Entropy Explained", caption: "Video: Molecular explanation of statistical entropy" },
-  { type: "SLIDE", title: "The Third Law", caption: "Slide 4: Absolute Zero limitations and crystal entropy" }
+interface MockContent {
+  type: "SLIDE" | "IMAGE" | "VIDEO"
+  title: string
+  caption: string
+  url?: string
+}
+
+const MOCK_CONTENT_ITEMS: MockContent[] = [
+  { 
+    type: "SLIDE", 
+    title: "1. The First Law of Thermodynamics", 
+    caption: "Energy cannot be created or destroyed, only transformed from one form to another. ΔU = Q - W",
+  },
+  { 
+    type: "IMAGE", 
+    title: "2. The Carnot Cycle Engine Schematic", 
+    caption: "Figure 2.1: Showing Heat input (Qh) from Hot reservoir, Work output (W), and Heat output (Qc) to Cold reservoir.",
+  },
+  { 
+    type: "VIDEO", 
+    title: "3. Entropy & The Second Law Explained", 
+    caption: "Short video demonstrating molecular randomness, disorder, and irreversible thermodynamic processes.",
+    url: "https://www.youtube.com/embed/kYWz52_h6BY" // Educational video about entropy
+  },
+  { 
+    type: "SLIDE", 
+    title: "4. Absolute Zero & The Third Law", 
+    caption: "As temperature approaches absolute zero (0 Kelvin), the entropy of a pure crystalline substance approaches zero.",
+  }
 ]
 
-const AI_SCRIPT_LINES = [
+const AI_LOBBY_SUBTITLES = [
   "Welcome back to ClassAI. Today, we are studying Thermodynamics.",
   "Let's review the First Law: Energy cannot be created or destroyed, only transformed.",
-  "Look at the slide showing the Carnot Cycle model on your screen.",
+  "Look at the schematic showing the Carnot Cycle model on your screen.",
   "This is a theoretical engine that yields maximum thermal efficiency.",
   "Entropy, represented by S, is a measure of molecular randomness or disorder.",
   "As we proceed, notice how efficiency depends strictly on temperature reservoirs.",
@@ -73,37 +94,33 @@ export default function ClassroomView({
   studentName,
 }: ClassroomViewProps) {
 
-  // Global settings
+  // Media toggles
   const [micOn, setMicOn] = useState(true)
   const [videoOn, setVideoOn] = useState(true)
   const [handRaised, setHandRaised] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)
   const [isRecording, setIsRecording] = useState(false)
+  const [screenSharing, setScreenSharing] = useState(false)
+  const [whiteboardActive, setWhiteboardActive] = useState(false)
 
-  // Timer & Progress
+  // Timer & Topic Progress
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [activeTopicIdx, setActiveTopicIdx] = useState(0)
-
-  // Subtitles
   const [subIndex, setSubIndex] = useState(0)
 
-  // Mode Overrides (Teacher control)
-  const [aiTeachingMode, setAiTeachingMode] = useState<"Teaching" | "Paused" | "Human">(
-    session.teachingMode === "AI" ? "Teaching" : "Human"
+  // Mode Overrides (AI vs Paused vs Human)
+  const [teachingMode, setTeachingMode] = useState<"AI" | "Paused" | "Human">(
+    session.teachingMode === "AI" ? "AI" : "Human"
   )
 
-  // AI Assistant Suggestion card (Human mode)
-  const [aiSuggestion, setAiSuggestion] = useState<{
-    type: "IMAGE" | "VIDEO"
-    title: string
-    show: boolean
-  } | null>({
+  // AI suggestions in Human teacher mode
+  const [aiSuggestions, setAiSuggestions] = useState<MockContent | null>({
     type: "IMAGE",
     title: "AI suggests showing: Carnot Cycle schematic diagram",
-    show: true,
+    caption: "Visual diagram demonstrating heat flow in engine pistons."
   })
 
-  // Chat
+  // Chat/Doubt System
   const [chatInput, setChatInput] = useState("")
   const [messages, setMessages] = useState<Array<{
     id: string
@@ -112,23 +129,20 @@ export default function ClassroomView({
     time: string
     isAI: boolean
   }>>([
-    { id: "1", sender: "Professor AI", text: "Welcome to today's physics session. Feel free to type any doubts here.", time: "10:00 AM", isAI: true },
-    { id: "2", sender: "Alex R.", text: "Is the efficiency formula only applicable to Carnot cycles?", time: "10:01 AM", isAI: false },
-    { id: "3", sender: "Professor AI", text: "Great question, Alex! Carnot cycle efficiency represents the maximum limit. Real engine efficiencies are always lower due to friction.", time: "10:02 AM", isAI: true }
+    { id: "1", sender: "Professor AI", text: "Welcome to today's physics session. Feel free to type any doubts here.", time: "12:00 PM", isAI: true },
   ])
 
   // Toasts
   const [toasts, setToasts] = useState<Array<{ id: string; text: string; icon?: React.ReactNode }>>([])
 
-  // End Session Modal
+  // End Session flow
   const [showEndModal, setShowEndModal] = useState(false)
   const [endCountdown, setEndCountdown] = useState<number | null>(null)
 
-  // Simulated student focus variance (fluctuates every 5s)
-  const [dynamicStudents, setDynamicStudents] = useState<Array<Student & { focusColor: string; statusLabel: string }>>([])
+  // Dynamic students list for attention simulation
+  const [dynamicStudents, setDynamicStudents] = useState<Array<Student & { focusColor: string; attentionState: "focused" | "distracted" | "offline"; isMuted: boolean }>>([])
   const [classFocusAvg, setClassFocusAvg] = useState(87)
 
-  // Keyboard shortcut handlers refs
   const chatBottomRef = useRef<HTMLDivElement>(null)
 
   // 1. Timer ticking
@@ -139,106 +153,103 @@ export default function ClassroomView({
     return () => clearInterval(interval)
   }, [])
 
-  // 2. AI Subtitle progression (changes every 6 seconds in AI Mode)
+  // 2. AI Subtitle & Topic progression (every 7s, unless paused or in human mode)
   useEffect(() => {
-    if (aiTeachingMode !== "Teaching") return
+    if (teachingMode !== "AI") return
     const interval = setInterval(() => {
       setSubIndex((prev) => {
-        const next = (prev + 1) % AI_SCRIPT_LINES.length
-        // Occasionally trigger topic progress change
-        if (next === 3 || next === 5) {
-          setActiveTopicIdx((t) => Math.min(MOCK_SLIDES.length - 1, t + 1))
-          addToast("AI moving to next topic")
+        const next = (prev + 1) % AI_LOBBY_SUBTITLES.length
+        
+        // Topic transition trigger
+        if (next === 2 || next === 4 || next === 6) {
+          const nextTopic = (activeTopicIdx + 1) % MOCK_CONTENT_ITEMS.length
+          setActiveTopicIdx(nextTopic)
+          addToast("Moving to next topic")
         }
         return next
       })
-    }, 6000)
+    }, 7000)
     return () => clearInterval(interval)
-  }, [aiTeachingMode])
+  }, [teachingMode, activeTopicIdx])
 
-  // 3. Simulate live student camera states & attention telemetry
+  // 3. Populate and update student focus telemetry
   useEffect(() => {
-    const generateStudentsList = () => {
-      const displayList = studentsList.map((st, idx) => {
-        // Mock attention scores based on indices
-        const focusVal = Math.floor(Math.random() * 40) + 60 // 60 to 100
-        let ringColor = "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]"
-        let status = "focused"
-
-        if (focusVal < 70) {
-          ringColor = "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.3)]"
-          status = "distracted"
-        } else if (focusVal < 62) {
-          ringColor = "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]"
-          status = "not looking"
+    const simulateFocus = () => {
+      const updated = studentsList.map((st) => {
+        const score = Math.floor(Math.random() * 45) + 55 // 55% - 100%
+        let attentionState: "focused" | "distracted" | "offline" = "focused"
+        let border = "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]"
+        
+        if (score < 70) {
+          attentionState = "distracted"
+          border = "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.35)]"
+        }
+        if (score < 60) {
+          attentionState = "offline"
+          border = "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]"
         }
 
         return {
           ...st,
-          engagementScore: focusVal,
-          focusColor: ringColor,
-          statusLabel: status
+          engagementScore: score,
+          attentionState,
+          focusColor: border,
+          isMuted: Math.random() > 0.3
         }
       })
 
-      // Add dummy classmates to make it a populated grid (12 participants)
-      const DUMMY_NAMES = [
-        "Emily Watson", "Jacob Stern", "Michael Chen", "Sophia Patel", 
-        "Liam O'Connor", "Chloe Dubois", "Daniel Kim", "Olivia Vance"
-      ]
-
-      while (displayList.length < 12) {
-        const nextIdx = displayList.length
-        const name = DUMMY_NAMES[nextIdx % DUMMY_NAMES.length] + ` ${String.fromCharCode(65 + nextIdx)}`
-        const focusVal = Math.floor(Math.random() * 50) + 50
-        let ringColor = "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]"
-        let status = "focused"
-
-        if (focusVal < 75) {
-          ringColor = "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.3)]"
-          status = "distracted"
+      // Ensure at least 8 students in the grid for mock experience
+      const MOCK_NAMES = ["Emily R.", "Jacob S.", "Michael C.", "Sophia P.", "Liam K.", "Chloe D.", "Daniel M.", "Olivia W."]
+      while (updated.length < 8) {
+        const idx = updated.length
+        const score = Math.floor(Math.random() * 40) + 60
+        let attentionState: "focused" | "distracted" | "offline" = "focused"
+        let border = "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]"
+        
+        if (score < 72) {
+          attentionState = "distracted"
+          border = "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.35)]"
         }
-        if (focusVal < 60) {
-          ringColor = "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.3)]"
-          status = "not looking"
+        if (score < 60) {
+          attentionState = "offline"
+          border = "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]"
         }
 
-        displayList.push({
-          id: `dummy-${nextIdx}`,
-          name,
+        updated.push({
+          id: `mock-st-${idx}`,
+          name: MOCK_NAMES[idx % MOCK_NAMES.length],
           joinedAt: null,
           lastActive: null,
           status: "active",
-          engagementScore: focusVal,
-          focusColor: ringColor,
-          statusLabel: status
+          engagementScore: score,
+          attentionState,
+          focusColor: border,
+          isMuted: true
         })
       }
 
-      setDynamicStudents(displayList)
-      
+      setDynamicStudents(updated)
+
       // Calculate class average
-      const avg = Math.floor(displayList.reduce((acc, curr) => acc + curr.engagementScore, 0) / displayList.length)
+      const avg = Math.floor(updated.reduce((acc, c) => acc + c.engagementScore, 0) / updated.length)
       setClassFocusAvg(avg)
 
-      if (avg < 75 && isTeacher) {
+      if (avg < 72) {
         addToast("Class attention dropping", <AlertCircle className="h-4 w-4 text-amber-500" />)
       }
     }
 
-    generateStudentsList()
-    const interval = setInterval(generateStudentsList, 6000)
+    simulateFocus()
+    const interval = setInterval(simulateFocus, 6000)
     return () => clearInterval(interval)
-  }, [studentsList, isTeacher])
+  }, [studentsList])
 
-  // 4. Keyboard Shortcuts listener
+  // 4. Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore key events in inputs
       if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
         return
       }
-
       const key = e.key.toLowerCase()
       if (key === "m") {
         setMicOn(!micOn)
@@ -249,10 +260,10 @@ export default function ClassroomView({
       } else if (key === "h") {
         setHandRaised(!handRaised)
         if (!handRaised) {
-          addToast("You raised your hand")
+          addToast("You raised your hand ✋")
+          // If student, mock toast to teacher
           if (!isTeacher) {
-            // Simulated AI speech trigger
-            playSpeechNotification(`${studentName || "A student"} has a question.`)
+            triggerAudioSpeech(`${studentName || "Student"} raised hand.`)
           }
         }
       } else if (key === "c") {
@@ -262,14 +273,14 @@ export default function ClassroomView({
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [micOn, videoOn, handRaised, chatOpen, studentName])
+  }, [micOn, videoOn, handRaised, chatOpen, isTeacher, studentName])
 
-  // Scroll chat to bottom on updates
+  // Scroll chat bottom
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
-  // Toast alert manager
+  // Toast Manager
   const addToast = (text: string, icon?: React.ReactNode) => {
     const id = Date.now().toString()
     setToasts((prev) => [...prev, { id, text, icon }])
@@ -278,19 +289,22 @@ export default function ClassroomView({
     }, 4000)
   }
 
-  // Audio speech announcements (Web Audio synthesizer API)
-  const playSpeechNotification = (phrase: string) => {
+  // Audio Speech Synthesizer
+  const triggerAudioSpeech = (text: string) => {
     try {
-      const speech = new SpeechSynthesisUtterance(phrase)
-      speech.volume = 0.5
-      speech.rate = 1.0
-      window.speechSynthesis.speak(speech)
+      const synth = window.speechSynthesis
+      if (synth) {
+        const utterance = new SpeechSynthesisUtterance(text)
+        utterance.volume = 0.4
+        utterance.rate = 1.05
+        synth.speak(utterance)
+      }
     } catch (e) {
-      console.warn("Speech synthesis not supported.")
+      console.warn("Speech synthesis unavailable.")
     }
   }
 
-  // Handle Send chat message
+  // Handle Doubt submission
   const handleSendDoubt = (e: React.FormEvent) => {
     e.preventDefault()
     if (!chatInput.trim()) return
@@ -306,147 +320,155 @@ export default function ClassroomView({
     setMessages((prev) => [...prev, userMsg])
     setChatInput("")
 
-    // Simulated AI Auto responder check
-    if (aiTeachingMode === "Teaching") {
-      setAiTeachingMode("Paused")
+    // Trigger AI doubt resolver flow
+    if (teachingMode === "AI") {
+      setTeachingMode("Paused")
       addToast("AI paused teaching to answer doubt")
-      
+      triggerAudioSpeech("Answering doubt.")
+
       setTimeout(() => {
-        const aiResponse = {
+        const aiAnswer = {
           id: (Date.now() + 1).toString(),
           sender: "Professor AI",
-          text: "Excellent point. Let's analyze this parameter. As we observe Carnot cycles, we realize work output is limited. I'll resume teaching now.",
+          text: "That is an excellent doubt! We look at Carnot cycle efficiency as the theoretical limit. Real heat engines always produce entropy, resulting in lesser work extraction.",
           time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           isAI: true,
         }
-        setMessages((prev) => [...prev, aiResponse])
-        setAiTeachingMode("Teaching")
-        addToast("AI resumed teaching")
+        setMessages((prev) => [...prev, aiAnswer])
+        
+        setTimeout(() => {
+          setTeachingMode("AI")
+          addToast("AI resumed teaching")
+          triggerAudioSpeech("Great question! Now let's continue...")
+        }, 1500)
       }, 3000)
     } else {
-      // Human mode auto doubt resolver
+      // Human mode auto response
       setTimeout(() => {
-        const aiResponse = {
+        const aiAnswer = {
           id: (Date.now() + 1).toString(),
           sender: "Professor AI",
-          text: "🤖 [AI Auto Answer] The Carnot cycle limit represents maximum efficiency due to thermodynamics entropy limitations. In real engines, friction reduces this output.",
+          text: "🤖 [AI Assistant Helper] Suggested explanation: Entropy measures system microstates. Increasing entropy makes thermal work less convertible back into mechanical force.",
           time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           isAI: true,
         }
-        setMessages((prev) => [...prev, aiResponse])
+        setMessages((prev) => [...prev, aiAnswer])
       }, 2000)
     }
   }
 
-  // Format Elapsed Time (hh:mm:ss)
-  const formatElapsed = (sec: number) => {
-    const h = Math.floor(sec / 3600).toString().padStart(2, "0")
-    const m = Math.floor((sec % 3600) / 60).toString().padStart(2, "0")
+  // Format Elapsed Time
+  const formatTimeStr = (sec: number) => {
+    const m = Math.floor(sec / 60).toString().padStart(2, "0")
     const s = (sec % 60).toString().padStart(2, "0")
-    return h === "00" ? `${m}:${s}` : `${h}:${m}:${s}`
+    return `${m}:${s}`
   }
 
-  // Confirm classroom end trigger
-  const handleEndClassroom = () => {
+  // Handle End Class
+  const confirmEndClass = () => {
     setShowEndModal(false)
     setEndCountdown(5)
-    
-    // Play AI summary voice cue
-    playSpeechNotification("That is all for today's class. Great work everyone!")
+    triggerAudioSpeech("That's all for today. Great work everyone!")
   }
 
-  // Countdown timer redirect effect
+  // Countdown timer redirect
   useEffect(() => {
     if (endCountdown === null) return
     if (endCountdown === 0) {
-      window.location.href = "/dashboard"
+      window.location.href = `/session/${sessionCode}/summary`
       return
     }
     const timer = setTimeout(() => {
       setEndCountdown((c) => (c !== null ? c - 1 : null))
     }, 1000)
     return () => clearTimeout(timer)
-  }, [endCountdown])
+  }, [endCountdown, sessionCode])
 
-  // UI calculations
-  const progressPercent = Math.floor(((activeTopicIdx + 1) / MOCK_SLIDES.length) * 100)
-  const currentSlide = MOCK_SLIDES[activeTopicIdx]
+  const currentContent = MOCK_CONTENT_ITEMS[activeTopicIdx]
+  const progressPercent = Math.floor(((activeTopicIdx + 1) / MOCK_CONTENT_ITEMS.length) * 100)
 
   return (
-    <div className="fixed inset-0 bg-[#0A0A0A] text-white flex flex-col font-sans antialiased overflow-hidden select-none z-50">
+    <div className="fixed inset-0 bg-[#070708] text-white flex flex-col font-sans antialiased overflow-hidden select-none z-50 h-screen w-screen">
       
-      {/* Dynamic speaking waveform keyframes */}
+      {/* Waveform Keyframes */}
       <style>{`
-        @keyframes bounce-waveform {
-          0%, 100% { transform: scaleY(0.3); }
-          50% { transform: scaleY(1.1); }
+        @keyframes waveform {
+          0%, 100% { transform: scaleY(0.2); }
+          50% { transform: scaleY(1.0); }
         }
-        .bounce-bar {
-          animation: bounce-waveform 0.6s ease-in-out infinite;
+        .wv-bar {
+          animation: waveform 0.75s ease-in-out infinite;
         }
-        .bounce-bar-1 { animation-delay: 0.1s; }
-        .bounce-bar-2 { animation-delay: 0.25s; }
-        .bounce-bar-3 { animation-delay: 0.05s; }
-        .bounce-bar-4 { animation-delay: 0.3s; }
-        .bounce-bar-5 { animation-delay: 0.15s; }
+        .wv-1 { animation-delay: 0.1s; }
+        .wv-2 { animation-delay: 0.25s; }
+        .wv-3 { animation-delay: 0.05s; }
+        .wv-4 { animation-delay: 0.3s; }
+        .wv-5 { animation-delay: 0.15s; }
       `}</style>
 
-      {/* ──────────────────────────────────────────
-      ─── TOP NAVIGATION HEADER BAR ─────────────
-      ────────────────────────────────────────── */}
-      <header className="h-16 border-b border-[#1a1a1a] bg-[#111111] px-6 flex items-center justify-between z-20">
-        {/* Left Brand info */}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ─── TOP BAR (dark #111111) ────────
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      <header className="h-16 bg-[#111111] border-b border-white/[0.06] px-6 flex items-center justify-between flex-shrink-0 z-30">
+        {/* Left: Logo & Session Title */}
         <div className="flex items-center gap-3">
-          <Image src="/logo.png" alt="Class AI" width={28} height={28} />
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center border border-purple-400/25">
+            <Brain className="h-4.5 w-4.5 text-white" />
+          </div>
           <div className="flex flex-col">
-            <span className="text-sm font-bold tracking-tight text-white leading-none">
+            <span className="text-xs font-black tracking-tight text-white leading-none">
               Class<span className="text-purple-400">AI</span>
             </span>
-            <span className="text-[9px] text-white/30 font-semibold uppercase mt-0.5 tracking-wider truncate max-w-[120px] md:max-w-none">
-              {session.title}
+            <span className="text-[10px] text-white/40 font-semibold tracking-wide truncate max-w-[140px] mt-0.5 uppercase">
+              {session.title || "Thermodynamics Lab"}
             </span>
           </div>
         </div>
 
-        {/* Center Topic Progress Bar */}
-        <div className="hidden md:flex flex-col items-center gap-1.5 w-80">
-          <div className="flex items-center gap-1.5 text-xs text-white/60 font-semibold">
-            <span className="text-purple-400 uppercase text-[9px] font-bold">Topic {activeTopicIdx + 1} of {MOCK_SLIDES.length}:</span>
-            <span className="truncate max-w-[180px]">{currentSlide.title}</span>
+        {/* Center: Topic progress indicator */}
+        <div className="flex flex-col items-center gap-1.5 w-80">
+          <div className="flex items-center gap-2 text-xs text-white/70 font-medium">
+            <span className="text-purple-400 font-bold uppercase text-[9px] tracking-wider">
+              Topic {activeTopicIdx + 1} of {MOCK_CONTENT_ITEMS.length}:
+            </span>
+            <span className="truncate max-w-[160px]">{currentContent.title}</span>
           </div>
           <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-purple-500 transition-all duration-500 rounded-full"
+            <div 
+              className="h-full bg-purple-500 rounded-full transition-all duration-700 ease-out" 
               style={{ width: `${progressPercent}%` }}
             />
           </div>
         </div>
 
-        {/* Right telemetries */}
-        <div className="flex items-center gap-4.5">
-          {/* Focus indicator */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.02] border border-white/5 text-xs">
-            <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-            <span className="text-white/40">Focus:</span>
-            <span className={`font-bold ${classFocusAvg >= 80 ? "text-emerald-400" : "text-amber-400"}`}>{classFocusAvg}%</span>
+        {/* Right: Metrics & End session */}
+        <div className="flex items-center gap-4 text-xs font-semibold">
+          {/* Class Focus */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.02] border border-white/5">
+            <span className={`h-2 w-2 rounded-full ${classFocusAvg >= 80 ? "bg-emerald-500" : "bg-amber-400"}`} />
+            <span className="text-white/40">Class Focus:</span>
+            <span className={classFocusAvg >= 80 ? "text-emerald-400" : "text-amber-400"}>
+              {classFocusAvg}%
+            </span>
           </div>
 
           {/* Time & Count */}
-          <div className="flex items-center gap-3 text-xs text-white/60">
-            <span className="font-mono bg-black/25 px-2.5 py-1 rounded border border-white/5">{formatElapsed(elapsedSeconds)}</span>
-            <span className="flex items-center gap-1 bg-black/25 px-2.5 py-1 rounded border border-white/5">
+          <div className="flex items-center gap-3 bg-white/[0.02] border border-white/5 px-3 py-1.5 rounded-lg">
+            <div className="flex items-center gap-1 text-white/50">
+              <Clock className="h-3.5 w-3.5 text-purple-400" />
+              <span className="font-mono text-white">{formatTimeStr(elapsedSeconds)}</span>
+            </div>
+            <div className="flex items-center gap-1 text-white/50 border-l border-white/10 pl-3">
               <Users className="h-3.5 w-3.5 text-purple-400" />
-              {dynamicStudents.length}
-            </span>
-            {/* Net Dot */}
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" title="Network status: Excellent" />
+              <span className="text-white">{dynamicStudents.length}</span>
+            </div>
           </div>
 
-          {/* End Button */}
+          {/* Red End Session Button */}
           {isTeacher && (
             <button
               onClick={() => setShowEndModal(true)}
-              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-bold text-white transition-all shadow-md shadow-red-600/20 cursor-pointer"
+              className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl transition-colors cursor-pointer"
             >
               End Session
             </button>
@@ -454,42 +476,43 @@ export default function ClassroomView({
         </div>
       </header>
 
-      {/* 👁 TEACHER OBSERVER BANNER 👁 */}
-      {isTeacher && session.teachingMode === "AI" && (
-        <div className="h-10 bg-[#141414] border-b border-[#242424] flex items-center justify-between px-6 z-10 text-xs text-white/60">
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ─── OBSERVER BANNER (Teacher Only) ─
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {isTeacher && teachingMode !== "Human" && (
+        <div className="h-10 bg-[#0F0F10] border-b border-white/[0.04] px-6 flex items-center justify-between text-xs text-white/50 flex-shrink-0 z-20">
           <div className="flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
-            <span>👁 You are observing • <strong>AI is teaching</strong></span>
+            <span className="font-medium">👁 You are observing • AI is teaching</span>
           </div>
-          <div className="flex items-center gap-2.5">
-            {aiTeachingMode === "Teaching" ? (
+          <div className="flex items-center gap-2">
+            {teachingMode === "AI" ? (
               <button
                 onClick={() => {
-                  setAiTeachingMode("Paused")
+                  setTeachingMode("Paused")
                   addToast("AI Teacher paused")
                 }}
-                className="px-2.5 py-1 rounded bg-[#1f1f1f] hover:bg-[#2a2a2a] text-[10px] font-bold border border-purple-500/30 text-purple-300 transition-colors"
+                className="px-3 py-1 rounded-lg bg-white/5 border border-white/10 text-white hover:bg-white/10 font-bold text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
               >
                 Pause AI
               </button>
             ) : (
               <button
                 onClick={() => {
-                  setAiTeachingMode("Teaching")
+                  setTeachingMode("AI")
                   addToast("AI Teacher active")
                 }}
-                className="px-2.5 py-1 rounded bg-[#1f1f1f] hover:bg-[#2a2a2a] text-[10px] font-bold border border-emerald-500/30 text-emerald-300 transition-colors"
+                className="px-3 py-1 rounded-lg bg-[#2E1065] border border-purple-500/25 text-purple-300 hover:bg-purple-950 font-bold text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
               >
                 Resume AI
               </button>
             )}
-
             <button
               onClick={() => {
-                setAiTeachingMode("Human")
+                setTeachingMode("Human")
                 addToast("Observer mode deactivated. You are leading the class.")
               }}
-              className="px-2.5 py-1 rounded bg-[#1f1f1f] hover:bg-[#2a2a2a] text-[10px] font-bold border border-white/10 text-white transition-colors"
+              className="px-3 py-1 rounded-lg bg-white/5 border border-white/10 text-white hover:bg-white/10 font-bold text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
             >
               Take Over
             </button>
@@ -497,97 +520,90 @@ export default function ClassroomView({
         </div>
       )}
 
-      {/* ──────────────────────────────────────────
-      ─── CORE SPLIT CLASSROOM MAIN GRID ─────────
-      ────────────────────────────────────────── */}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ─── MAIN CONTENT AREA (Split Layout) 
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
       <div className="flex-1 flex overflow-hidden">
         
-        {/* LEFT COLUMN: ACTIVE LECTURE CANVAS (65%) */}
-        <div className="flex-1 p-5 flex flex-col gap-5 overflow-y-auto custom-scrollbar">
+        {/* LEFT + CENTER PANEL (65% width) */}
+        <div className="w-[65%] flex flex-col p-5 gap-4.5 overflow-hidden justify-between h-full pb-20">
           
-          {/* ─── ROW 1: AI TEACHER TILE (OR HUMAN ASSISTANT CARD) ─── */}
-          {aiTeachingMode !== "Human" ? (
-            /* VERSION 1 — AI TEACHER CARD */
-            <div className={`bg-[#1A1A1A] rounded-2xl border p-4.5 flex items-center justify-between gap-4.5 transition-all duration-300 relative ${
-              aiTeachingMode === "Teaching"
-                ? "border-purple-500/60 shadow-[0_0_15px_rgba(147,51,234,0.15)]"
-                : "border-white/5"
+          {/* AI TEACHER TILE (OR COMPACT AI PANEL ABOVE CONTENT) */}
+          {teachingMode !== "Human" ? (
+            <div className={`bg-[#121214] rounded-2xl border p-4 flex items-center justify-between gap-4.5 transition-all duration-300 relative ${
+              teachingMode === "AI"
+                ? "border-purple-500/50 shadow-[0_0_15px_rgba(147,51,234,0.15)]"
+                : "border-white/[0.04]"
             }`}>
-              {/* Red Pulse Badge */}
-              <div className="absolute top-4 right-4 flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-[8px] font-bold uppercase tracking-wider text-red-500">Live</span>
-              </div>
-
-              {/* Avatar detail */}
-              <div className="flex items-center gap-4">
-                {/* Glowing geometric orb simulation */}
-                <div className={`h-14 w-14 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-violet-600 flex items-center justify-center border border-purple-400/20 transition-all ${
-                  aiTeachingMode === "Teaching" ? "scale-105 shadow-[0_0_12px_rgba(147,51,234,0.4)] animate-pulse" : "opacity-60"
+              <div className="flex items-center gap-3">
+                {/* Speaking Glowing Orb */}
+                <div className={`h-12 w-12 rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-violet-600 flex items-center justify-center border border-purple-400/25 transition-all ${
+                  teachingMode === "AI" ? "scale-105 shadow-[0_0_12px_rgba(147,51,234,0.4)] animate-pulse" : "opacity-45"
                 }`}>
-                  <Brain className="h-7 w-7 text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]" />
+                  <Brain className="h-6 w-6 text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]" />
                 </div>
-
-                <div className="space-y-0.5">
-                  <h4 className="text-xs font-bold text-white">Professor AI</h4>
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">
-                    {aiTeachingMode === "Teaching" ? "Actively Lecturing..." : "Paused / Waiting"}
+                <div>
+                  <h4 className="text-xs font-bold text-white leading-none">Professor AI</h4>
+                  <span className="text-[9px] text-white/30 font-bold uppercase tracking-wider mt-1 block">
+                    {teachingMode === "AI" ? "Actively Lecturing..." : "Paused"}
                   </span>
                 </div>
               </div>
 
-              {/* Speaking waveform bouncing lines */}
-              {aiTeachingMode === "Teaching" ? (
-                <div className="flex items-end gap-1 h-6 w-12 pb-1 text-purple-400">
-                  <div className="h-full w-1 rounded bg-current bounce-bar bounce-bar-1" />
-                  <div className="h-full w-1 rounded bg-current bounce-bar bounce-bar-2" />
-                  <div className="h-full w-1 rounded bg-current bounce-bar bounce-bar-3" />
-                  <div className="h-full w-1 rounded bg-current bounce-bar bounce-bar-4" />
-                  <div className="h-full w-1 rounded bg-current bounce-bar bounce-bar-5" />
+              {/* Red Pulse live dot */}
+              <div className="flex items-center gap-3">
+                {teachingMode === "AI" ? (
+                  <div className="flex items-end gap-1 h-5 w-10 pb-0.5 text-purple-400">
+                    <div className="h-full w-0.5 rounded bg-current wv-bar wv-1" />
+                    <div className="h-full w-0.5 rounded bg-current wv-bar wv-2" />
+                    <div className="h-full w-0.5 rounded bg-current wv-bar wv-3" />
+                    <div className="h-full w-0.5 rounded bg-current wv-bar wv-4" />
+                    <div className="h-full w-0.5 rounded bg-current wv-bar wv-5" />
+                  </div>
+                ) : (
+                  <div className="flex items-end gap-1 h-5 w-10 pb-0.5 text-white/10">
+                    <div className="h-1 w-0.5 rounded bg-current" />
+                    <div className="h-1 w-0.5 rounded bg-current" />
+                    <div className="h-1 w-0.5 rounded bg-current" />
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5 bg-red-950/20 border border-red-500/20 px-2 py-0.5 rounded-full">
+                  <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-[8px] font-black text-red-400 uppercase tracking-widest">Live</span>
                 </div>
-              ) : (
-                <div className="flex items-end gap-1 h-6 w-12 pb-1 text-white/20">
-                  <div className="h-1 w-1 rounded bg-current" />
-                  <div className="h-1 w-1 rounded bg-current" />
-                  <div className="h-1 w-1 rounded bg-current" />
-                  <div className="h-1 w-1 rounded bg-current" />
-                  <div className="h-1 w-1 rounded bg-current" />
-                </div>
-              )}
+              </div>
             </div>
           ) : (
-            /* VERSION 2 — AI ASSISTANT CARD FOR HUMAN TEACHER */
-            <div className="bg-[#1A1A1A] rounded-2xl border border-white/5 p-4.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4.5">
+            /* AI suggestion compact panel (Human Mode) */
+            <div className="bg-[#121214] rounded-2xl border border-white/[0.04] p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 flex-shrink-0 animate-pulse">
+                <div className="h-9 w-9 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 animate-pulse">
                   <Brain className="h-5 w-5" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                    🤖 AI Assistant <span className="text-[9px] font-bold text-purple-400 animate-pulse">Listening...</span>
+                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5 leading-none">
+                    🤖 AI Assistant <span className="text-[9px] text-purple-400 font-extrabold uppercase animate-pulse">Listening...</span>
                   </h4>
-                  <p className="text-[10px] text-white/50 leading-relaxed mt-0.5">
-                    {aiSuggestion?.show
-                      ? aiSuggestion.title
-                      : "Awaiting audio triggers to suggest visual content outlines..."}
+                  <p className="text-[10px] text-white/40 mt-1">
+                    {aiSuggestions ? aiSuggestions.title : "Listening to your voice triggers to suggest materials..."}
                   </p>
                 </div>
               </div>
-
-              {aiSuggestion?.show && (
-                <div className="flex gap-2 w-full sm:w-auto">
+              {aiSuggestions && (
+                <div className="flex gap-2 w-full md:w-auto">
                   <button
                     onClick={() => {
-                      addToast("AI Visual displayed on canvas")
-                      setAiSuggestion(null)
+                      addToast("Displaying Carnot schematic on screen")
+                      setActiveTopicIdx(1) // Set Carnot diagram
+                      setAiSuggestions(null)
                     }}
-                    className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-[10px] font-bold text-white transition-colors cursor-pointer"
+                    className="flex-1 md:flex-none px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-[10px] font-black text-white uppercase tracking-wider transition-colors cursor-pointer"
                   >
                     Show this
                   </button>
                   <button
-                    onClick={() => setAiSuggestion(null)}
-                    className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-bold text-white/60 transition-colors cursor-pointer"
+                    onClick={() => setAiSuggestions(null)}
+                    className="flex-1 md:flex-none px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-black text-white/50 uppercase tracking-wider transition-colors cursor-pointer"
                   >
                     Skip
                   </button>
@@ -596,78 +612,93 @@ export default function ClassroomView({
             </div>
           )}
 
-          {/* ─── ROW 2: ACTIVE CONTENT DISPLAY SCREEN ─── */}
-          <div className="flex-1 bg-[#111111] border border-white/5 rounded-2xl overflow-hidden flex flex-col relative min-h-[320px]">
-            {/* Header / Badge */}
-            <div className="absolute top-4 right-4 z-10">
-              <span className="px-2.5 py-1 rounded bg-black/45 border border-white/5 text-[9px] font-mono font-bold text-purple-400 tracking-wider">
-                {currentSlide.type}
+          {/* CONTENT DISPLAY */}
+          <div className="flex-1 bg-[#0D0D0E] border border-white/[0.04] rounded-2xl overflow-hidden flex flex-col relative min-h-[300px]">
+            {/* Header Badge */}
+            <div className="absolute top-4 right-4 z-10 flex gap-2">
+              <span className="px-2.5 py-1 rounded bg-black/55 border border-white/5 text-[9px] font-mono font-bold text-purple-400 uppercase tracking-widest">
+                {teachingMode === "Human" ? "CAM FEED" : currentContent.type}
               </span>
             </div>
 
-            {/* Simulated Content visual layout */}
-            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center z-0 relative">
-              <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff02_1px,transparent_1px),linear-gradient(to_bottom,#ffffff02_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
-
-              {/* Display depending on mode */}
-              {aiTeachingMode === "Human" ? (
-                /* Human view: Displays Teacher's Large Camera Feed */
-                <div className="h-full w-full max-w-lg rounded-xl border border-white/5 bg-black overflow-hidden relative flex items-center justify-center">
+            {/* Core Presenter */}
+            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center relative">
+              <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff01_1px,transparent_1px),linear-gradient(to_bottom,#ffffff01_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
+              
+              {teachingMode === "Human" ? (
+                /* Human instructor camera view */
+                <div className="h-full w-full max-w-lg rounded-xl border border-white/[0.06] bg-black overflow-hidden relative flex items-center justify-center">
                   {videoOn ? (
-                    <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-t from-black/60 to-transparent">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse self-end" />
+                    <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-t from-black/80 to-transparent">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse self-end border border-black" />
                       <div className="text-left">
-                        <span className="text-[10px] font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 uppercase tracking-wide">
-                          Teacher Camera feed active
+                        <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-2.5 py-1 rounded border border-purple-500/20 uppercase tracking-wider">
+                          Live Instructor
                         </span>
-                        <h4 className="text-xs font-bold text-white mt-1">Dr. Sarah Jenkins</h4>
+                        <h4 className="text-sm font-bold text-white mt-1.5">{studentName || "Dr. Sarah Jenkins"}</h4>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center justify-center gap-2 text-white/30">
-                      <UserIcon className="h-10 w-10" />
-                      <span className="text-xs font-bold uppercase tracking-widest">Video Muted</span>
+                    <div className="flex flex-col items-center justify-center gap-2 text-white/20">
+                      <UserIcon className="h-12 w-12" />
+                      <span className="text-xs font-bold uppercase tracking-widest">Video Feed Disabled</span>
                     </div>
                   )}
                 </div>
               ) : (
-                /* AI Mode: Displays Visual Presentations slides */
-                <div className="space-y-4 animate-fadeIn">
-                  <div className="h-32 w-32 rounded-2xl bg-purple-600/5 border border-purple-500/10 flex items-center justify-center text-purple-400/40 mx-auto">
-                    {currentSlide.type === "SLIDE" && <HelpCircle className="h-12 w-12" />}
-                    {currentSlide.type === "IMAGE" && <Share2 className="h-12 w-12" />}
-                    {currentSlide.type === "VIDEO" && <Play className="h-12 w-12 fill-current" />}
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white leading-tight">{currentSlide.title}</h3>
-                    <p className="text-xs text-white/40 mt-1 max-w-sm mx-auto">{currentSlide.caption}</p>
-                  </div>
+                /* AI modes content projection */
+                <div className="space-y-4 max-w-xl w-full animate-fadeIn transition-opacity duration-300">
+                  {currentContent.type === "VIDEO" && currentContent.url ? (
+                    <div className="w-full aspect-video rounded-xl overflow-hidden border border-white/5 bg-black">
+                      <iframe 
+                        className="w-full h-full"
+                        src={currentContent.url}
+                        title={currentContent.title}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="h-24 w-24 rounded-2xl bg-purple-600/5 border border-purple-500/10 flex items-center justify-center text-purple-400 mx-auto shadow-[0_0_20px_rgba(147,51,234,0.05)]">
+                        {currentContent.type === "SLIDE" ? (
+                          <Presentation className="h-10 w-10" />
+                        ) : (
+                          <Tv className="h-10 w-10" />
+                        )}
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-white tracking-tight">{currentContent.title}</h3>
+                        <p className="text-xs text-white/40 mt-1 max-w-md mx-auto leading-relaxed">{currentContent.caption}</p>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Bottom Slide Caption Bar */}
-            <div className="h-12 border-t border-white/5 bg-black/25 flex items-center px-5 text-xs text-white/50 justify-between">
-              <span>{currentSlide.caption}</span>
-              <span className="font-mono text-[10px] text-white/20">CLASS-SCREEN-0{activeTopicIdx + 1}</span>
+            {/* Bottom Caption Bar */}
+            <div className="h-11 border-t border-white/[0.04] bg-black/15 flex items-center justify-between px-5 text-xs text-white/50">
+              <span className="truncate">{teachingMode === "Human" ? "Whiteboard & webcam feed rendering..." : currentContent.caption}</span>
+              <span className="font-mono text-[9px] text-white/25 flex-shrink-0 ml-4">PAGE_ID: CLS-0{activeTopicIdx + 1}</span>
             </div>
           </div>
 
-          {/* ─── ROW 3: SCROLLING AI TRANSCRIBER TEXT ─── */}
-          {aiTeachingMode !== "Human" && (
-            <div className="bg-[#111111] border border-white/5 rounded-2xl p-5 space-y-3 min-h-[90px]">
-              <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-purple-400">
-                <Brain className="h-3.5 w-3.5" />
+          {/* AI TRANSCRIPT SECTION */}
+          {teachingMode !== "Human" && (
+            <div className="bg-[#121214] border border-white/[0.04] rounded-2xl p-4.5 space-y-2.5">
+              <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-purple-400">
+                <Radio className="h-3.5 w-3.5 animate-pulse" />
                 Live Subtitles
               </div>
-              <div className="max-h-[60px] overflow-y-auto custom-scrollbar text-xs leading-relaxed space-y-1">
-                {AI_SCRIPT_LINES.map((line, idx) => {
+              <div className="max-h-[50px] overflow-y-auto custom-scrollbar text-xs leading-relaxed">
+                {AI_LOBBY_SUBTITLES.map((line, idx) => {
                   const isActive = idx === subIndex
                   return (
                     <span
                       key={idx}
-                      className={`inline-block mr-1.5 transition-colors ${
-                        isActive ? "text-purple-400 font-semibold" : "text-white/30"
+                      className={`mr-2 transition-all ${
+                        isActive ? "text-purple-400 font-semibold underline decoration-purple-500/30 underline-offset-4" : "text-white/25"
                       }`}
                     >
                       {line}
@@ -680,62 +711,66 @@ export default function ClassroomView({
 
         </div>
 
-        {/* RIGHT PANEL: GRID & LIVE DOUBTS CHAT (35%) */}
-        <aside className="w-96 border-l border-[#1a1a1a] bg-[#0A0A0A] flex flex-col overflow-hidden">
+        {/* RIGHT PANEL (35% width) */}
+        <aside className="w-[35%] border-l border-white/[0.05] bg-[#070708] flex flex-col overflow-hidden h-full pb-20">
           
-          {/* TOP HALF: PARTICIPANTS WEBCAM GRID */}
-          <div className="flex-1 p-5 border-b border-[#1a1a1a] flex flex-col overflow-hidden">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-white border-b border-white/5 pb-2.5 mb-3.5 flex items-center justify-between">
+          {/* TOP HALF: STUDENT TILES */}
+          <div className="flex-1 p-5 border-b border-white/[0.05] flex flex-col overflow-hidden">
+            <h4 className="text-[10px] font-black uppercase tracking-wider text-white border-b border-white/[0.04] pb-3 mb-3 flex items-center justify-between">
               <span>In this class ({dynamicStudents.length})</span>
-              <span className="text-[10px] text-white/40 font-semibold">{dynamicStudents.filter(s => s.statusLabel === "focused").length} focused</span>
+              <span className="text-[10px] text-emerald-400 font-extrabold flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {dynamicStudents.filter(s => s.attentionState === "focused").length} Active
+              </span>
             </h4>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar grid grid-cols-2 gap-3 pb-2">
+            {/* Scrollable list */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar grid grid-cols-2 gap-3 pr-1">
               {dynamicStudents.map((st) => (
                 <div
                   key={st.id}
-                  className={`h-28 rounded-xl bg-[#111111] border-2 relative overflow-hidden flex flex-col items-center justify-center transition-all ${st.focusColor}`}
+                  className={`h-24 rounded-xl bg-[#111112] border-2 relative overflow-hidden flex flex-col items-center justify-center transition-all ${st.focusColor}`}
                 >
-                  {/* Focus Color status tag */}
-                  <span className={`absolute top-2 right-2 text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                    st.statusLabel === "focused"
-                      ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"
-                      : st.statusLabel === "distracted"
-                      ? "bg-amber-500/15 text-amber-400 border border-amber-500/20"
-                      : "bg-rose-500/15 text-rose-400 border border-rose-500/20"
+                  {/* Status Indicator */}
+                  <span className={`absolute top-2 right-2 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                    st.attentionState === "focused"
+                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15"
+                      : st.attentionState === "distracted"
+                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/15"
+                      : "bg-rose-500/10 text-rose-400 border border-rose-500/15"
                   }`}>
-                    {st.statusLabel}
+                    {st.attentionState}
                   </span>
 
-                  {/* Avatar / Camera feed simulation */}
-                  <div className="h-8 w-8 rounded-full bg-purple-600/25 border border-purple-500/30 flex items-center justify-center text-xs font-bold text-purple-300 uppercase">
-                    {st.name.slice(0, 2)}
+                  {/* Circle initial avatar */}
+                  <div className="h-7 w-7 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-[10px] font-extrabold text-purple-300">
+                    {st.name.slice(0, 2).toUpperCase()}
                   </div>
 
-                  <span className="absolute bottom-2 left-2 text-[10px] font-semibold text-white/80 max-w-[110px] truncate">
-                    {st.id === studentId ? "You" : st.name.split(" ")[0]}
+                  <span className="absolute bottom-2 left-2 text-[10px] font-bold text-white/80 max-w-[100px] truncate">
+                    {st.name}
                   </span>
 
                   <span className="absolute bottom-2 right-2 text-white/30">
-                    <Mic className="h-3 w-3" />
+                    {st.isMuted ? <MicOff className="h-3 w-3 text-red-500" /> : <Mic className="h-3 w-3 text-emerald-400" />}
                   </span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* BOTTOM HALF: LIVE CHAT DOUBT RESOLUTION */}
-          <div className={`flex-1 p-5 flex flex-col overflow-hidden transition-all ${chatOpen ? "block" : "hidden"}`}>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-white border-b border-white/5 pb-2.5 mb-3 flex items-center justify-between">
+          {/* BOTTOM HALF: DOUBT CHAT */}
+          <div className={`flex-1 p-5 flex flex-col overflow-hidden transition-all ${chatOpen ? "flex" : "hidden"}`}>
+            <h4 className="text-[10px] font-black uppercase tracking-wider text-white border-b border-white/[0.04] pb-3 mb-3.5 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
-                <MessageSquare className="h-4 w-4 text-purple-400" />
+                <MessageSquare className="h-3.5 w-3.5 text-purple-400" />
                 Doubt Chat
               </span>
-              <span className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
             </h4>
 
-            {/* Chat message listing */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3.5 pb-3">
+            {/* Scrolling bubbles */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3.5 pr-1 pb-2 flex flex-col">
               {messages.map((msg) => (
                 <div
                   key={msg.id}
@@ -743,11 +778,11 @@ export default function ClassroomView({
                     msg.isAI ? "self-start" : "self-end items-end"
                   }`}
                 >
-                  <span className="text-[9px] text-white/30 font-semibold">{msg.sender} • {msg.time}</span>
+                  <span className="text-[9px] text-white/30 font-bold">{msg.sender} • {msg.time}</span>
                   <div className={`text-xs px-3.5 py-2.5 rounded-xl leading-relaxed relative ${
                     msg.isAI
-                      ? "bg-[#1E1E1E] text-white/90 border border-white/5 rounded-tl-sm flex gap-2 items-start"
-                      : "bg-purple-600 text-white rounded-tr-sm"
+                      ? "bg-[#161618] text-white/95 border border-white/5 rounded-tl-none flex gap-2 items-start"
+                      : "bg-purple-600 text-white rounded-tr-none shadow-md shadow-purple-600/15"
                   }`}>
                     {msg.isAI && <Brain className="h-4 w-4 text-purple-400 flex-shrink-0 mt-0.5" />}
                     <span>{msg.text}</span>
@@ -757,15 +792,15 @@ export default function ClassroomView({
               <div ref={chatBottomRef} />
             </div>
 
-            {/* Chat Send Input Form */}
-            <form onSubmit={handleSendDoubt} className="flex gap-2 pt-2 border-t border-white/5">
+            {/* Doubt Input form */}
+            <form onSubmit={handleSendDoubt} className="flex gap-2 pt-2 border-t border-white/[0.04] mt-auto">
               <input
                 type="text"
                 required
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 placeholder="Ask a doubt..."
-                className="flex-1 px-4 py-2.5 bg-[#111111] border border-white/10 rounded-xl text-xs focus:outline-none focus:border-purple-500 text-white placeholder-white/20"
+                className="flex-1 px-4 py-2.5 bg-[#121214] border border-white/10 rounded-xl text-xs focus:outline-none focus:border-purple-500 text-white placeholder-white/20"
               />
               <button
                 type="submit"
@@ -779,88 +814,103 @@ export default function ClassroomView({
 
       </div>
 
-      {/* ──────────────────────────────────────────
-      ─── FLOATING BOTTOM CONTROLS TOOLBAR ───────
-      ────────────────────────────────────────── */}
-      <footer className="h-16 border-t border-[#1a1a1a] bg-[#111111]/85 backdrop-blur-xl px-6 flex items-center justify-between z-20">
-        
-        {/* Student actions */}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ─── BOTTOM CONTROLS TOOLBAR ────────
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      <footer className="fixed bottom-0 left-0 right-0 h-16 bg-[#111112]/90 backdrop-blur-xl border-t border-white/[0.04] px-6 flex items-center justify-between z-30">
+        {/* Left Side: General Mic/Cam/Hand controls */}
         <div className="flex items-center gap-2">
-          {/* Mute toggle */}
-          <button
-            onClick={() => setMicOn(!micOn)}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              micOn
-                ? "bg-white/5 border-white/5 text-white/60 hover:bg-white/10"
-                : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20"
-            }`}
-            title="Mute/Unmute Mic (M)"
-          >
-            {micOn ? <Mic className="h-4.5 w-4.5" /> : <MicOff className="h-4.5 w-4.5" />}
-          </button>
+          {/* Mic */}
+          <div className="relative group">
+            <button
+              onClick={() => setMicOn(!micOn)}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                micOn
+                  ? "bg-white/5 border-white/5 text-white/70 hover:bg-white/10"
+                  : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20"
+              }`}
+            >
+              {micOn ? <Mic className="h-4.5 w-4.5" /> : <MicOff className="h-4.5 w-4.5" />}
+            </button>
+            <span className="absolute bottom-14 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-[9px] font-bold text-white rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              Toggle Mic (M)
+            </span>
+          </div>
 
-          {/* Video toggle */}
-          <button
-            onClick={() => setVideoOn(!videoOn)}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              videoOn
-                ? "bg-white/5 border-white/5 text-white/60 hover:bg-white/10"
-                : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20"
-            }`}
-            title="Toggle Camera Feed (V)"
-          >
-            {videoOn ? <Video className="h-4.5 w-4.5" /> : <VideoOff className="h-4.5 w-4.5" />}
-          </button>
+          {/* Camera */}
+          <div className="relative group">
+            <button
+              onClick={() => setVideoOn(!videoOn)}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                videoOn
+                  ? "bg-white/5 border-white/5 text-white/70 hover:bg-white/10"
+                  : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20"
+              }`}
+            >
+              {videoOn ? <Video className="h-4.5 w-4.5" /> : <VideoOff className="h-4.5 w-4.5" />}
+            </button>
+            <span className="absolute bottom-14 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-[9px] font-bold text-white rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              Toggle Video (V)
+            </span>
+          </div>
 
-          {/* Raise Hand toggle */}
-          <button
-            onClick={() => {
-              setHandRaised(!handRaised)
-              if (!handRaised) addToast("You raised your hand")
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              handRaised
-                ? "bg-amber-500/15 border-amber-500/20 text-amber-400 hover:bg-amber-500/25"
-                : "bg-white/5 border-white/5 text-white/60 hover:bg-white/10"
-            }`}
-            title="Raise Hand (H)"
-          >
-            <Hand className="h-4.5 w-4.5" />
-          </button>
+          {/* Hand */}
+          <div className="relative group">
+            <button
+              onClick={() => {
+                setHandRaised(!handRaised)
+                if (!handRaised) addToast("You raised your hand ✋")
+              }}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                handRaised
+                  ? "bg-amber-500/15 border-amber-500/25 text-amber-400 hover:bg-amber-500/20"
+                  : "bg-white/5 border-white/5 text-white/70 hover:bg-white/10"
+              }`}
+            >
+              <Hand className="h-4.5 w-4.5" />
+            </button>
+            <span className="absolute bottom-14 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-[9px] font-bold text-white rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              Raise Hand (H)
+            </span>
+          </div>
 
-          {/* Chat toggle */}
-          <button
-            onClick={() => setChatOpen(!chatOpen)}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              chatOpen
-                ? "bg-purple-600/10 border-purple-500/20 text-purple-400 hover:bg-purple-600/20"
-                : "bg-white/5 border-white/5 text-white/60 hover:bg-white/10"
-            }`}
-            title="Toggle Doubt Chat (C)"
-          >
-            <MessageSquare className="h-4.5 w-4.5" />
-          </button>
+          {/* Chat Toggle */}
+          <div className="relative group">
+            <button
+              onClick={() => setChatOpen(!chatOpen)}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                chatOpen
+                  ? "bg-purple-600/10 border-purple-500/20 text-purple-400 hover:bg-purple-600/20"
+                  : "bg-white/5 border-white/5 text-white/70 hover:bg-white/10"
+              }`}
+            >
+              <MessageSquare className="h-4.5 w-4.5" />
+            </button>
+            <span className="absolute bottom-14 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-[9px] font-bold text-white rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              Doubt Chat (C)
+            </span>
+          </div>
         </div>
 
-        {/* Teacher observer/override controls */}
+        {/* Center: Teacher Special Overrides */}
         {isTeacher && (
           <div className="flex items-center gap-2">
-            {aiTeachingMode !== "Human" ? (
+            {teachingMode !== "Human" ? (
               <>
                 <button
                   onClick={() => {
-                    const nextMode = aiTeachingMode === "Teaching" ? "Paused" : "Teaching"
-                    setAiTeachingMode(nextMode)
-                    addToast(nextMode === "Teaching" ? "AI Teacher resumed" : "AI Teacher paused")
+                    const next = teachingMode === "AI" ? "Paused" : "AI"
+                    setTeachingMode(next)
+                    addToast(next === "AI" ? "AI Teacher active" : "AI Teacher paused")
                   }}
                   className="px-4 py-2.5 rounded-xl border border-purple-500/20 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-xs font-bold transition-all cursor-pointer"
                 >
-                  {aiTeachingMode === "Teaching" ? "Pause AI" : "Resume AI"}
+                  {teachingMode === "AI" ? "Pause AI" : "Resume AI"}
                 </button>
                 <button
                   onClick={() => {
-                    setAiTeachingMode("Human")
-                    addToast("AI Teacher deactivated. You are leading the class.")
+                    setTeachingMode("Human")
+                    addToast("Observer mode deactivated. You are leading the class.")
                   }}
                   className="px-4 py-2.5 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.05] text-xs font-bold transition-all cursor-pointer"
                 >
@@ -868,53 +918,88 @@ export default function ClassroomView({
                 </button>
               </>
             ) : (
-              <button
-                onClick={() => {
-                  setAiTeachingMode("Teaching")
-                  addToast("AI Teacher activated. AI is leading the class.")
-                }}
-                className="px-4 py-2.5 rounded-xl border border-purple-500/20 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-xs font-bold transition-all cursor-pointer"
-              >
-                Let AI Teach
-              </button>
+              <>
+                {/* Screen Share */}
+                <button
+                  onClick={() => {
+                    setScreenSharing(!screenSharing)
+                    addToast(screenSharing ? "Screen sharing ended" : "Screen sharing active")
+                  }}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    screenSharing
+                      ? "bg-purple-600/10 border-purple-500/25 text-purple-400"
+                      : "bg-white/5 border-white/5 text-white/70 hover:bg-white/10"
+                  }`}
+                  title="Screen Share"
+                >
+                  <ScreenShare className="h-4.5 w-4.5" />
+                </button>
+
+                {/* Whiteboard */}
+                <button
+                  onClick={() => {
+                    setWhiteboardActive(!whiteboardActive)
+                    addToast(whiteboardActive ? "Whiteboard hidden" : "Whiteboard visible")
+                  }}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    whiteboardActive
+                      ? "bg-purple-600/10 border-purple-500/25 text-purple-400"
+                      : "bg-white/5 border-white/5 text-white/70 hover:bg-white/10"
+                  }`}
+                  title="Whiteboard Override"
+                >
+                  <PenTool className="h-4.5 w-4.5" />
+                </button>
+
+                <button
+                  onClick={() => {
+                    setTeachingMode("AI")
+                    addToast("AI Teacher activated. AI is leading the class.")
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-purple-500/20 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-xs font-bold transition-all cursor-pointer"
+                >
+                  Let AI Teach
+                </button>
+              </>
             )}
 
-            {/* Record toggle */}
+            {/* Record Session */}
             <button
               onClick={() => {
-                const val = !isRecording
-                setIsRecording(val)
-                addToast(val ? "Session recording started" : "Session recording stopped")
+                const next = !isRecording
+                setIsRecording(next)
+                addToast(next ? "Session recording active" : "Recording saved")
               }}
               className={`px-4.5 py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 isRecording
-                  ? "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20"
+                  ? "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 animate-pulse"
                   : "bg-white/5 border-white/5 text-white/60 hover:bg-white/10"
               }`}
             >
-              <span className={`h-2 w-2 rounded-full bg-red-500 ${isRecording ? "animate-pulse" : ""}`} />
+              <span className="h-2 w-2 rounded-full bg-red-500" />
               Record
             </button>
           </div>
         )}
 
-        {/* Leave lobby button */}
+        {/* Right Side: Exit Class */}
         <Link
           href="/dashboard"
-          className="px-4.5 py-2.5 rounded-xl bg-red-600/10 border border-red-500/20 hover:bg-red-600/20 text-red-400 text-xs font-bold transition-all"
+          className="px-4.5 py-2.5 rounded-xl bg-red-600/10 border border-red-500/15 hover:bg-red-600/20 text-red-400 text-xs font-bold transition-all flex items-center gap-1.5"
         >
+          <LogOut className="h-4 w-4" />
           Leave Class
         </Link>
       </footer>
 
-      {/* ──────────────────────────────────────────
-      ─── TOAST NOTIFICATIONS POPUP LIST ─────────
-      ────────────────────────────────────────── */}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ─── NOTIFICATIONS TOASTS (bottom-left) 
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
       <div className="fixed bottom-20 left-6 z-50 flex flex-col gap-2 max-w-xs pointer-events-none">
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className="flex items-center gap-2.5 bg-[#1a1a1a]/95 backdrop-blur border border-white/5 p-3 rounded-xl shadow-2xl animate-slideRight text-xs text-white/90"
+            className="flex items-center gap-2.5 bg-[#141416]/95 backdrop-blur border border-white/10 p-3 rounded-xl shadow-2xl animate-slideRight text-xs text-white/95"
           >
             {toast.icon || <Sparkles className="h-4 w-4 text-purple-400 flex-shrink-0" />}
             <span>{toast.text}</span>
@@ -922,33 +1007,33 @@ export default function ClassroomView({
         ))}
       </div>
 
-      {/* ──────────────────────────────────────────
-      ─── END CLASSROOM DIALOG CONFIRM MODAL ─────
-      ────────────────────────────────────────── */}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ─── END CONFIRMATION DIALOG MODAL 
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
       {showEndModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#1a1a1a] border border-white/5 w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="bg-[#121214] border border-white/10 w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl animate-fadeIn">
             <div className="p-6 text-center space-y-4">
               <div className="h-12 w-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mx-auto">
                 <AlertCircle className="h-6 w-6" />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <h3 className="font-bold text-white text-base">End this session?</h3>
-                <p className="text-xs text-white/40">
-                  A dynamic session summary will be compiled automatically for all students.
+                <p className="text-xs text-white/40 leading-relaxed">
+                  Ending this session will disconnect all participants and immediately build your post-session analytics report card.
                 </p>
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-white/5 bg-black/10 flex gap-3">
+            <div className="px-6 py-4 border-t border-white/[0.04] bg-black/20 flex gap-3">
               <button
                 onClick={() => setShowEndModal(false)}
-                className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-bold text-white/60 hover:text-white transition-all cursor-pointer"
+                className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-bold text-white/50 hover:text-white transition-all cursor-pointer"
               >
                 Cancel
               </button>
               <button
-                onClick={handleEndClassroom}
+                onClick={confirmEndClass}
                 className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl text-xs font-bold text-white transition-all cursor-pointer"
               >
                 End Session
@@ -958,18 +1043,20 @@ export default function ClassroomView({
         </div>
       )}
 
-      {/* ─── TIMER TRANSITION SCREEN STATE ─── */}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      ─── END SESSION FLOW SCREEN overlay 
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
       {endCountdown !== null && (
-        <div className="fixed inset-0 bg-[#0A0A0A] z-50 flex flex-col items-center justify-center text-center p-6 text-white font-sans">
-          <div className="space-y-4 animate-scaleUp">
+        <div className="fixed inset-0 bg-[#070708] z-50 flex flex-col items-center justify-center text-center p-6 text-white">
+          <div className="space-y-4 max-w-sm mx-auto animate-scaleUp">
             <div className="h-16 w-16 rounded-2xl bg-purple-600/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mx-auto">
               <Brain className="h-8 w-8 animate-pulse" />
             </div>
-            <h2 className="text-xl font-bold tracking-tight">Class session has ended</h2>
-            <p className="text-xs text-purple-300/80 leading-relaxed max-w-xs mx-auto">
-              "That's all for today's class. Great work everyone!"
+            <h2 className="text-lg font-black tracking-tight">Class Session Ended</h2>
+            <p className="text-xs text-purple-300/80 leading-relaxed font-semibold italic">
+              "That's all for today. Great work everyone!"
             </p>
-            <p className="text-[10px] text-white/20">Returning to dashboard in {endCountdown} seconds...</p>
+            <p className="text-[10px] text-white/20 pt-2">Building summary analytics... Redirecting in {endCountdown}s</p>
           </div>
         </div>
       )}
