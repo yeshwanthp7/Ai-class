@@ -222,6 +222,21 @@ export const joinSession = async (
     }
 
     await setDoc(studentRef, studentData)
+
+    // Save student profile to global users collection in Firestore
+    try {
+      const globalUserRef = doc(db, "users", studentId)
+      await setDoc(globalUserRef, {
+        uid: studentId,
+        displayName: studentName,
+        role: "student",
+        createdAt: serverTimestamp(),
+        lastLogin: serverTimestamp(),
+      })
+    } catch (e) {
+      console.warn("Failed to create global user profile for student:", e)
+    }
+
     return studentId
   } catch (error) {
     console.error("Error joining session:", error)

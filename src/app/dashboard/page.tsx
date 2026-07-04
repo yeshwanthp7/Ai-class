@@ -40,6 +40,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import DashboardSidebar from "@/components/dashboard-sidebar"
 import { collection, getDocs } from "firebase/firestore"
 import { db } from "@/lib/firebase"
+import AIStudyBuddy from "@/components/AIStudyBuddy"
 
 function DashboardContent() {
   const router = useRouter()
@@ -243,6 +244,7 @@ function DashboardContent() {
   else if (currentTab === "analytics") activeItem = "Analytics"
   else if (currentTab === "students") activeItem = "Students"
   else if (currentTab === "settings") activeItem = "Settings"
+  else if (currentTab === "study-buddy") activeItem = "AI Study Buddy"
 
   // Helper to parse duration strings safely
   const parseDuration = (dur: string) => {
@@ -532,6 +534,13 @@ function DashboardContent() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* AI STUDY BUDDY TAB */}
+          {currentTab === "study-buddy" && (
+            <div className="space-y-6 animate-fadeIn">
+              <AIStudyBuddy isTeacher={true} />
             </div>
           )}
 

@@ -8,13 +8,48 @@ import {
   onAuthStateChanged,
   User,
 } from "firebase/auth"
-import { auth, googleProvider } from "./firebase"
+import { auth, googleProvider, db } from "./firebase"
+import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore"
+
+// Helper: Save user profile to Firestore
+export const saveUserProfile = async (
+  uid: string,
+  email: string | null,
+  displayName: string | null,
+  role: string
+) => {
+  try {
+    const userRef = doc(db, "users", uid)
+    const userSnap = await getDoc(userRef)
+    if (!userSnap.exists()) {
+      await setDoc(userRef, {
+        uid,
+        email,
+        displayName,
+        role,
+        createdAt: serverTimestamp(),
+        lastLogin: serverTimestamp(),
+      })
+    } else {
+      await updateDoc(userRef, {
+        lastLogin: serverTimestamp(),
+        ...(displayName && { displayName }),
+      })
+    }
+  } catch (error) {
+    console.error("Error saving user profile to Firestore:", error)
+  }
+}
 
 // 1. Sign in with Google
 export const signInWithGoogle = async (): Promise<User | null> => {
   try {
     const result = await signInWithPopup(auth, googleProvider)
-    return result.user
+    const user = result.user
+    if (user) {
+      await saveUserProfile(user.uid, user.email, user.displayName, "teacher")
+    }
+    return user
   } catch (error: any) {
     if (error.code === "auth/popup-blocked") {
       console.warn("Popup blocked, falling back to redirect...")
@@ -33,7 +68,9 @@ export const signInWithEmail = async (
 ): Promise<User> => {
   try {
     const result = await signInWithEmailAndPassword(auth, email, password)
-    return result.user
+    const user = result.user
+    await saveUserProfile(user.uid, user.email, user.displayName, "teacher")
+    return user
   } catch (error) {
     console.error("Email Sign-In Error:", error)
     throw error
@@ -53,6 +90,8 @@ export const signUpWithEmail = async (
     await updateProfile(user, {
       displayName: fullName,
     })
+    // Save to Firestore under 'users' collection
+    await saveUserProfile(user.uid, email, fullName, "teacher")
     return user
   } catch (error) {
     console.error("Email Sign-Up Error:", error)
@@ -77,3 +116,4 @@ export const subscribeToAuthChanges = (
   return onAuthStateChanged(auth, callback)
 }
 export type { User }
+
