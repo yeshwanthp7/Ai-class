@@ -3,6 +3,7 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocs,
   updateDoc,
   onSnapshot,
   query,
@@ -186,8 +187,29 @@ export const joinSession = async (
       throw new Error("This session has already ended.")
     }
 
+    if (sessionData.status === "Active") {
+      throw new Error("This session has already started. Late joins are not allowed.")
+    }
+
+    // Check if name is blacklisted/kicked
+    const nameLower = studentName.trim().toLowerCase()
+    let isKicked = false
+    try {
+      const kickedColRef = collection(db, "sessions", formattedCode, "kicked")
+      const kickedQuery = query(kickedColRef, where("nameLower", "==", nameLower))
+      const kickedSnap = await getDocs(kickedQuery)
+      isKicked = !kickedSnap.empty
+    } catch (e) {
+      // ponytail: Fallback to false if kicked rules aren't deployed in the Firebase Console
+      console.warn("Failed to check blacklisted students (likely missing firestore.rules update):", e)
+    }
+
+    if (isKicked) {
+      throw new Error("You have been kicked from this session and cannot rejoin.")
+    }
+
     // Use name as part of ID, lower-cased and stripped of spaces
-    const studentId = studentName.trim().toLowerCase().replace(/\s+/g, "-") + "-" + Date.now().toString().slice(-4)
+    const studentId = nameLower.replace(/\s+/g, "-") + "-" + Date.now().toString().slice(-4)
     const studentRef = doc(db, "sessions", formattedCode, "students", studentId)
 
     const studentData: Student = {
@@ -274,7 +296,7 @@ export const updateStudentEngagement = async (
   sessionCode: string,
   studentId: string,
   score: number,
-  status: "active" | "idle" | "distracted" | "offline"
+  status: "focused" | "distracted" | "away" | "offline"
 ): Promise<void> => {
   try {
     const studentRef = doc(db, "sessions", sessionCode.trim().toUpperCase(), "students", studentId)
@@ -325,3 +347,215 @@ export const syncClassroomProgress = async (sessionCode: string, currentTopicInd
     console.error("Error syncing classroom progress:", error)
   }
 }
+
+// 9. Kick student explicitly and blacklist them
+export const kickStudent = async (
+  sessionCode: string,
+  studentId: string,
+  studentName: string
+): Promise<void> => {
+  try {
+    const code = sessionCode.trim().toUpperCase()
+    await removeStudent(code, studentId)
+
+    const kickedRef = doc(db, "sessions", code, "kicked", studentId)
+    await setDoc(kickedRef, {
+      id: studentId,
+      name: studentName,
+      nameLower: studentName.trim().toLowerCase(),
+      kickedAt: serverTimestamp(),
+    })
+  } catch (error) {
+    console.error("Error kicking student:", error)
+  }
+}
+
+// 10. Check if student name is kicked/blacklisted
+export const checkIsKicked = async (
+  sessionCode: string,
+  studentName: string
+): Promise<boolean> => {
+  try {
+    const code = sessionCode.trim().toUpperCase()
+    const kickedColRef = collection(db, "sessions", code, "kicked")
+    const q = query(kickedColRef, where("nameLower", "==", studentName.trim().toLowerCase()))
+    const snap = await getDocs(q)
+    return !snap.empty
+  } catch {
+    return false
+  }
+}
+
+// 11. Check if student ID is kicked/blacklisted
+export const checkIsIdKicked = async (
+  sessionCode: string,
+  studentId: string
+): Promise<boolean> => {
+  try {
+    const code = sessionCode.trim().toUpperCase()
+    const docRef = doc(db, "sessions", code, "kicked", studentId)
+    const snap = await getDoc(docRef)
+    return snap.exists()
+  } catch {
+    return false
+  }
+}
+
+// 12. Check if student ID exists in the active/registered student collection
+export const isStudentRegistered = async (
+  sessionCode: string,
+  studentId: string
+): Promise<boolean> => {
+  try {
+    const code = sessionCode.trim().toUpperCase()
+    const studentRef = doc(db, "sessions", code, "students", studentId)
+    const snap = await getDoc(studentRef)
+    return snap.exists()
+  } catch {
+    return false
+  }
+}
+
+// 13. Set student presence status to offline
+export const setStudentOffline = async (
+  sessionCode: string,
+  studentId: string
+): Promise<void> => {
+  try {
+    const code = sessionCode.trim().toUpperCase()
+    const studentRef = doc(db, "sessions", code, "students", studentId)
+    await updateDoc(studentRef, {
+      status: "offline",
+      lastActive: serverTimestamp(),
+    })
+  } catch (error) {
+    console.error("Error setting student offline:", error)
+  }
+}
+
+export interface KickedStudent {
+  id: string
+  name: string
+  nameLower: string
+  kickedAt: any
+}
+
+// 14. Subscribe to kicked list updates
+export const subscribeToKicked = (
+  sessionCode: string,
+  onUpdate: (kicked: KickedStudent[]) => void,
+  onError?: (error: any) => void
+) => {
+  const kickedColRef = collection(db, "sessions", sessionCode.trim().toUpperCase(), "kicked")
+  return onSnapshot(
+    kickedColRef,
+    (querySnap) => {
+      const kickedList: KickedStudent[] = []
+      querySnap.forEach((docSnap) => {
+        kickedList.push(docSnap.data() as KickedStudent)
+      })
+      onUpdate(kickedList)
+    },
+    (err) => {
+      console.error("Kicked list subscription error:", err)
+      if (onError) onError(err)
+    }
+  )
+}
+
+// 15. Fetch all sessions for a specific teacher with student counts
+export const getTeacherSessions = async (teacherId: string): Promise<Array<Session & { studentCount: number }>> => {
+  try {
+    const sessionsRef = collection(db, "sessions")
+    const q = query(sessionsRef, where("teacherId", "==", teacherId))
+    const snap = await getDocs(q)
+    const list: Session[] = []
+    snap.forEach((doc) => {
+      list.push(doc.data() as Session)
+    })
+    
+    // Fetch student counts for each session concurrently
+    const listWithCounts = await Promise.all(
+      list.map(async (sess) => {
+        try {
+          const studentsCol = collection(db, "sessions", sess.code, "students")
+          const studentsSnap = await getDocs(studentsCol)
+          
+          const kickedCol = collection(db, "sessions", sess.code, "kicked")
+          const kickedSnap = await getDocs(kickedCol)
+          
+          return {
+            ...sess,
+            studentCount: studentsSnap.size + kickedSnap.size
+          }
+        } catch {
+          return { ...sess, studentCount: 0 }
+        }
+      })
+    )
+
+    // Sort by creation time desc
+    return listWithCounts.sort((a, b) => {
+      const aTime = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : (a.createdAt ? new Date(a.createdAt).getTime() : 0)
+      const bTime = b.createdAt?.seconds ? b.createdAt.seconds * 1000 : (b.createdAt ? new Date(b.createdAt).getTime() : 0)
+      return bTime - aTime
+    })
+  } catch (error) {
+    console.error("Error fetching teacher sessions:", error)
+    return []
+  }
+}
+
+export interface RosterStudent {
+  name: string
+  classesAttended: number
+  avgEngagement: number
+}
+
+// 16. Compile unique students roster across sessions
+export const getTeacherStudentsRoster = async (sessionCodes: string[]): Promise<RosterStudent[]> => {
+  try {
+    const studentMap: Record<string, { name: string; count: number; totalScore: number }> = {}
+    
+    await Promise.all(
+      sessionCodes.map(async (code) => {
+        try {
+          const studentsCol = collection(db, "sessions", code, "students")
+          const snap = await getDocs(studentsCol)
+          snap.forEach((doc) => {
+            const data = doc.data()
+            const name = data.name || "Unknown Student"
+            const nameKey = name.trim().toLowerCase()
+            const score = data.engagementScore || 0
+            
+            if (studentMap[nameKey]) {
+              studentMap[nameKey].count += 1
+              studentMap[nameKey].totalScore += score
+            } else {
+              studentMap[nameKey] = {
+                name,
+                count: 1,
+                totalScore: score
+              }
+            }
+          })
+        } catch {
+          // ignore read errors for single session
+        }
+      })
+    )
+    
+    return Object.values(studentMap).map((std) => ({
+      name: std.name,
+      classesAttended: std.count,
+      avgEngagement: Math.floor(std.totalScore / std.count),
+    }))
+  } catch (error) {
+    console.error("Error building student roster:", error)
+    return []
+  }
+}
+
+
+
+

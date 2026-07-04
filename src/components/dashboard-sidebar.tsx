@@ -17,10 +17,10 @@ import { subscribeToAuthChanges, signOutUser, User } from "@/lib/auth-service"
 // Sidebar navigation items
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
-  { label: "My Sessions", icon: Video, href: "#" },
-  { label: "Analytics", icon: BarChart3, href: "#" },
-  { label: "Students", icon: Users, href: "#" },
-  { label: "Settings", icon: Settings, href: "#" },
+  { label: "My Sessions", icon: Video, href: "/dashboard?tab=sessions" },
+  { label: "Analytics", icon: BarChart3, href: "/dashboard?tab=analytics" },
+  { label: "Students", icon: Users, href: "/dashboard?tab=students" },
+  { label: "Settings", icon: Settings, href: "/dashboard?tab=settings" },
 ]
 
 interface DashboardSidebarProps {

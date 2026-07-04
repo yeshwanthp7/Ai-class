@@ -26,6 +26,12 @@ service cloud.firestore {
         // Students can join (create) and update their heartbeat/telemetry status
         allow create, update, delete: if true;
       }
+      
+      // Subcollection for kicked/blacklisted students
+      match /kicked/{studentId} {
+        allow read: if true;
+        allow write: if true;
+      }
     }
   }
 }

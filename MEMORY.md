@@ -94,5 +94,40 @@ src/
     - [x] Added Unsplash domains to `next.config.ts` remotePatterns
     - [x] Fade-in/out transitions when topic changes
     - [x] Topic name caption overlaid on image with gradient overlay
-- [ ] Analytics & reports
+  - [x] Advanced CV Focus Tracker (MediaPipe Face Mesh)
+    - [x] Corrected mirrored gaze directions & added vertical gaze detection
+    - [x] Added multi-axis head pose (yaw, pitch, roll) tracking
+    - [x] Added EAR blink-vs-drowsy classification & blink rate fatigue monitoring
+    - [x] Added MAR yawn detection
+    - [x] Implemented EMA smoothing & sustained distraction penalty decay
+    - [x] Faster warning escalation (5s warning, 12s lock warning, 20s pause overlay, 45s kick)
+    - [x] Replaced emoji warnings with custom lucide-react vector icons (Hand, AlertTriangle, Lock, Eye, EyeOff, Brain)
+    - [x] Added debounced face detection (5 frames) to avoid warning flicker on momentary camera glitches
+    - [x] Added out-of-frame warning overlay with a strict 5-second countdown auto-kick if face remains undetected
+  - [x] Retinal Focus / 3D Iris Gaze Tracking Upgrade
+    - [x] Rewrote `useFocusTracker.ts` with true 3D gaze vector computation (eyeball center → iris center using landmarks 468-477)
+    - [x] Implemented embedded One-Euro Filter (no deps) for jitter-free gaze smoothing — adaptive cutoff: low jitter when still, low latency when moving
+    - [x] Added head-gaze fusion scoring — signed yaw/pitch addition so compensatory eye movements cancel head turns (looking back at screen while head is turned)
+    - [x] Added pupil engagement signal from relative iris diameter (iris ring landmarks normalised by eye opening height), with rolling baseline and ±5 point score modifier
+    - [x] Replaced flat gaze/head penalties with continuous angular deviation penalties (10° dead zone, -2 pts/deg beyond)
+    - [x] Extended FocusMetrics interface with `gazeYaw`, `gazePitch`, `irisEngagement`, `effectiveDeviation`
+    - [x] Updated StudentCamera HUD to show gaze angle degrees, iris engagement indicator (ScanEye icon), and effective deviation
+    - [x] Updated live/page.tsx initial FocusMetrics state for new fields
+    - [x] Modularized Ponytail prompt integrations (`src/lib/ponytail/`) with dynamic `loader`, markdown `parser`, and system prompt `manager` prepending logic inside the Groq API route (`/api/groq`). Integrated support for executing specific Ponytail sub-skills (e.g., `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`) via slash commands in user prompts.
+    - [x] Implemented Strict Admission Control & Kick/Rejoin Rules:
+      - [x] Configured Firestore security rules to allow read/write to new `/sessions/{sessionId}/kicked` subcollection.
+      - [x] Updated `joinSession` database services to enforce session status checks (blocking late-joins when `Active` or `Completed`) and name-based kick blacklisting.
+      - [x] Created `kickStudent`, `checkIsKicked`, `checkIsIdKicked`, and `isStudentRegistered` helpers.
+      - [x] Replaced `removeStudent` with `setStudentOffline` on page unload to prevent disconnection/refresh from wiping active student registration credentials.
+      - [x] Integrated waiting room (`page.tsx`) and live classroom (`live/page.tsx`) validation checks on mount, showing premium "Access Denied" screens if kicked or unregistered, and auto-populating session codes from query params on redirect.
+      - [x] Built a high-fidelity Attendance & Performance Report on the concluded session page (`summary/page.tsx`) for the teacher, listing student names, registration times, average focus scores, and statuses (Present, Left, Kicked), with a built-in CSV export button to download the roster data.
+- [x] Analytics & reports (Dashboard panels)
+- [x] Dashboard Sidebar Navigation & Dynamic Content Tabs:
+  - [x] Wrapped dashboard page in React `<Suspense>` to support safe Next.js static build execution with `useSearchParams()`.
+  - [x] Implemented dynamic panel routing supporting all 5 tabs (Dashboard, My Sessions, Analytics, Students, Settings) via URL query parameters (`?tab=...`).
+  - [x] Connected "My Sessions" and "Students" roster directory to live Firestore database aggregations.
+  - [x] Implemented premium visual dashboards for Analytics, searchable Sessions table with code copy utility, Student Roster directories, and Settings preferences slider/checklist panel.
+  - [x] Fixed teacher redirection race condition on waiting room session mount: checks teacher role synchronously via authenticated user ID compared to session owner ID, bypassing student admission verification checks.
+  - [x] Restored Student Tiles Gallery containing StudentCamera inside live/page.tsx (which had been accidentally deleted during the implementation of the swipeable side drawer), restoring video streams, focus tracking updates, and real-time participant listings.
+
 

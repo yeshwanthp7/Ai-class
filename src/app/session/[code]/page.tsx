@@ -50,6 +50,9 @@ import {
   updateSessionControls,
   Session,
   Student,
+  checkIsIdKicked,
+  checkIsKicked,
+  isStudentRegistered,
 } from "@/lib/session-service"
 import { subscribeToAuthChanges } from "@/lib/auth-service"
 import DashboardSidebar from "@/components/dashboard-sidebar"
@@ -92,6 +95,7 @@ export default function SessionPage() {
 
   // Authentication & Role
   const [currentUser, setCurrentUser] = useState<any>(null)
+  const [authLoading, setAuthLoading] = useState(true)
   const [isTeacher, setIsTeacher] = useState(false)
   const [studentId, setStudentId] = useState<string | null>(null)
   const [studentName, setStudentName] = useState<string | null>(null)
@@ -184,10 +188,12 @@ export default function SessionPage() {
     try {
       const unsubscribeAuth = subscribeToAuthChanges((user) => {
         setCurrentUser(user)
+        setAuthLoading(false)
       })
       return () => unsubscribeAuth()
     } catch (e) {
       console.error("Auth subscription failed:", e)
+      setAuthLoading(false)
     }
   }, [])
 
@@ -275,6 +281,55 @@ export default function SessionPage() {
     }
   }, [session, currentUser])
 
+  // 4b. Enforce admission checks for student
+  useEffect(() => {
+    if (!session || loading || authLoading) return
+
+    // Calculate synchronously to avoid state update race conditions
+    const isUserTeacher = currentUser 
+      ? session.teacherId === currentUser.uid 
+      : session.teacherId === "offline-teacher"
+
+    if (isUserTeacher) return // Skip access checks for teacher
+
+    const verifyAccess = async () => {
+      // 1. Check if kicked
+      if (studentId) {
+        const isKickedById = await checkIsIdKicked(sessionCode, studentId)
+        if (isKickedById) {
+          setError("You have been kicked from this session and cannot rejoin.")
+          return
+        }
+      }
+      if (studentName) {
+        const isKickedByName = await checkIsKicked(sessionCode, studentName)
+        if (isKickedByName) {
+          setError("You have been kicked from this session and cannot rejoin.")
+          return
+        }
+      }
+
+      // 2. Check registration status
+      if (studentId) {
+        const registered = await isStudentRegistered(sessionCode, studentId)
+        if (!registered) {
+          if (session.status === "Active" || session.status === "Completed") {
+            setError("This session has already started or ended. Late joins are not allowed.")
+          } else {
+            // Redirect to join page to enter name/code properly
+            router.push(`/auth?role=student&code=${sessionCode}`)
+          }
+        }
+      } else {
+        // No student ID, redirect to auth
+        router.push(`/auth?role=student&code=${sessionCode}`)
+      }
+    }
+
+    verifyAccess()
+  }, [session, loading, authLoading, currentUser, studentId, studentName, sessionCode, router])
+
+
   // 5a. Helper: show transition animation, save data to localStorage, then navigate to /live
   const triggerClassroomTransition = () => {
     if (isClassroomActive || isTransitioning) return
@@ -335,6 +390,13 @@ export default function SessionPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.status, isClassroomActive, isTransitioning])
+
+  // 6b. Completed state checker — redirects student to summary page if session ends
+  useEffect(() => {
+    if (!isTeacher && session?.status === "Completed") {
+      router.push(`/session/${sessionCode}/summary`)
+    }
+  }, [session?.status, isTeacher, sessionCode, router])
 
 
   // 7. Waiting Room: rotate help subtitles
