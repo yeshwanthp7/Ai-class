@@ -129,5 +129,15 @@ src/
   - [x] Implemented premium visual dashboards for Analytics, searchable Sessions table with code copy utility, Student Roster directories, and Settings preferences slider/checklist panel.
   - [x] Fixed teacher redirection race condition on waiting room session mount: checks teacher role synchronously via authenticated user ID compared to session owner ID, bypassing student admission verification checks.
   - [x] Restored Student Tiles Gallery containing StudentCamera inside live/page.tsx (which had been accidentally deleted during the implementation of the swipeable side drawer), restoring video streams, focus tracking updates, and real-time participant listings.
+- [x] Custom Loading Screen Animation on Authentication (/auth) Page:
+  - [x] Embedded the premium WebGL shader background and logo loading animation on initial portal mount.
+  - [x] Added smooth fade-in layouts and opacity transitions after systems check is complete.
+- [x] WebRTC & LiveKit Autoplay Compatibility fixes:
+  - [x] Added `muted` attribute to remote participant video elements to bypass modern web browser autoplay restriction blocks.
+- [x] Dynamic Object Detection & Phone/Tablet usage enforcement:
+  - [x] Dynamically integrated TensorFlow.js and pre-trained COCO-SSD object detection inside the local video frame hook (`useFocusTracker.ts`).
+  - [x] Configured real-time classification to scan for forbidden devices (`cell phone`, `tablet`, `laptop`) once every 1200ms.
+  - [x] Implemented a 3-strikes warnings modal: warning dialog pops up on screen on detection, and automatically kicks/ejects the student if detected 3 times consecutively, redirecting to a custom `device_usage` exit screen.
+  - [x] Pushed all updates to main GitHub repository branch and triggered live Vercel deployments.
 
 
