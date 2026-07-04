@@ -25,12 +25,15 @@ import {
   VolumeX,
   Eye,
   VideoOff as CameraOff,
+  Search,
+  MoreHorizontal,
 } from "lucide-react"
 
 import { getFile } from "@/lib/fileStorage"
 import { extractPDFPages } from "@/lib/pdfParser"
 import StudentCamera from "@/components/StudentCamera"
-import { subscribeToStudents, subscribeToSession, syncClassroomProgress, removeStudent } from "@/lib/session-service"
+import type { FocusMetrics } from "@/hooks/useFocusTracker"
+import { subscribeToStudents, subscribeToSession, syncClassroomProgress, setStudentOffline, checkIsIdKicked, checkIsKicked, isStudentRegistered, endSession } from "@/lib/session-service"
 
 /* ─── MOCK DATA ─── */
 
@@ -58,7 +61,10 @@ export default function LiveClassroomPage() {
   const [isTeacher, setIsTeacher] = useState(true)
   const isStudent = !isTeacher;
   const [studentId, setStudentId] = useState("unknown-student")
+  const [studentName, setStudentName] = useState<string | null>(null)
   const [hasEntered, setHasEntered] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const [pdfPages, setPdfPages] = useState<string[]>([])
   const [isPdfMode, setIsPdfMode] = useState(false)
@@ -86,7 +92,7 @@ export default function LiveClassroomPage() {
 
   const [students, setStudents] = useState<any[]>([])
   const [classFocus, setClassFocus] = useState(0)
-  const [localMetrics, setLocalMetrics] = useState<{score: number, status: string}>({score: 0, status: "offline"})
+  const [localMetrics, setLocalMetrics] = useState<FocusMetrics>({score: 0, status: "offline", gazeDirection: "unknown", faceDetected: false, eyesOpen: false, headYaw: 0, headPitch: 0, headRoll: 0, yawning: false, blinkRate: 0, gazeYaw: 0, gazePitch: 0, irisEngagement: 50, effectiveDeviation: 0, phoneDetected: false})
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({})
   const peerRef = useRef<any>(null)
@@ -108,23 +114,192 @@ export default function LiveClassroomPage() {
   const [showEndModal, setShowEndModal] = useState(false)
   const [endCountdown, setEndCountdown] = useState<number | null>(null)
 
-  /* ─── INIT ─── */
+  // --- Immersive Meeting Design States & Refs ---
+  const [showToolbar, setShowToolbar] = useState(true)
+  const [isParticipantsOpen, setIsParticipantsOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [showOnlyActive, setShowOnlyActive] = useState(false)
+  const [speakingStudentIds, setSpeakingStudentIds] = useState<Set<string>>(new Set())
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+
+  // Drawer Drag & Hint states
+  const [startX, setStartX] = useState(0)
+  const [currentX, setCurrentX] = useState(0)
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragOffset, setDragOffset] = useState(0)
+  const [showHint, setShowHint] = useState(false)
+
+  const isHoveringToolbarRef = useRef(false)
+  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const participantsPanelRef = useRef<HTMLDivElement>(null)
+  const participantsTabRef = useRef<HTMLButtonElement>(null)
+  const moreMenuRef = useRef<HTMLDivElement>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
+
+  // Hydrate hint display from localStorage
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const interacted = localStorage.getItem("hasInteractedParticipants")
+      if (!interacted) {
+        setShowHint(true)
+      }
+    }
+  }, [])
+
+  // Interaction helper to clear hint
+  const handleParticipantsInteraction = useCallback(() => {
+    setShowHint(false)
     try {
-      const title = localStorage.getItem("sessionTitle")
-      const subject = localStorage.getItem("sessionSubject")
-      const storedTopics = localStorage.getItem("sessionTopics")
-      const mode = localStorage.getItem("teachingMode")
-      const role = localStorage.getItem("userRole")
-      const storedStudentId = localStorage.getItem("studentId")
-      if (title) setSessionTitle(title)
-      if (subject) setSessionSubject(subject)
-      if (storedTopics) { try { setTopics(JSON.parse(storedTopics)) } catch { /* defaults */ } }
+      localStorage.setItem("hasInteractedParticipants", "true")
+    } catch { /* ignore */ }
+  }, [])
+
+  // Mouse Drag listeners on window
+  useEffect(() => {
+    if (!isDragging) return
+    const handleMouseMove = (e: MouseEvent) => {
+      setCurrentX(e.clientX)
+      setDragOffset(e.clientX - startX)
+    }
+    const handleMouseUp = (e: MouseEvent) => {
+      setIsDragging(false)
+      const dx = e.clientX - startX
+      if (isParticipantsOpen) {
+        if (dx > 80) {
+          setIsParticipantsOpen(false)
+          localStorage.setItem("participantsOpen", "false")
+        }
+      } else {
+        if (dx < -80) {
+          setIsParticipantsOpen(true)
+          handleParticipantsInteraction()
+          localStorage.setItem("participantsOpen", "true")
+        }
+      }
+      setDragOffset(0)
+    }
+    window.addEventListener("mousemove", handleMouseMove)
+    window.addEventListener("mouseup", handleMouseUp)
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove)
+      window.removeEventListener("mouseup", handleMouseUp)
+    }
+  }, [isDragging, startX, isParticipantsOpen, handleParticipantsInteraction])
+
+  // Touch Swipe / Drag listeners on window
+  useEffect(() => {
+    if (!isDragging) return
+    const handleTouchMove = (e: TouchEvent) => {
+      setCurrentX(e.touches[0].clientX)
+      setDragOffset(e.touches[0].clientX - startX)
+    }
+    const handleTouchEnd = () => {
+      setIsDragging(false)
+      const dx = currentX - startX
+      if (isParticipantsOpen) {
+        if (dx > 80) {
+          setIsParticipantsOpen(false)
+          localStorage.setItem("participantsOpen", "false")
+        }
+      } else {
+        if (dx < -80) {
+          setIsParticipantsOpen(true)
+          handleParticipantsInteraction()
+          localStorage.setItem("participantsOpen", "true")
+        }
+      }
+      setDragOffset(0)
+    }
+    window.addEventListener("touchmove", handleTouchMove, { passive: true })
+    window.addEventListener("touchend", handleTouchEnd)
+    return () => {
+      window.removeEventListener("touchmove", handleTouchMove)
+      window.removeEventListener("touchend", handleTouchEnd)
+    }
+  }, [isDragging, startX, currentX, isParticipantsOpen, handleParticipantsInteraction])
+
+  // Deterministic student mock features helper
+  const getStudentSimulatedProps = useCallback((id: string) => {
+    let hash = 0
+    for (let i = 0; i < id.length; i++) {
+      hash = id.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    hash = Math.abs(hash)
+    const isMuted = (hash % 3) === 0
+    const hasHandRaised = (hash % 11) === 0
+    const connectionQual = (hash % 10) > 7 ? "Fair" : (hash % 10) > 4 ? "Good" : "Excellent"
+    return { isMuted, hasHandRaised, connectionQual }
+  }, [])
+
+  const getStudentProps = useCallback((s: any) => {
+    const isSelf = s.id === studentId
+    if (isSelf) {
+      return {
+        isMuted: !micOn,
+        hasHandRaised: handRaised,
+        connectionQual: "Excellent",
+      }
+    }
+    return getStudentSimulatedProps(s.id)
+  }, [studentId, micOn, handRaised, getStudentSimulatedProps])
+
+  const getDrawerWidth = useCallback(() => {
+    if (drawerRef.current) return drawerRef.current.offsetWidth
+    if (typeof window !== "undefined") {
+      if (window.innerWidth < 768) return window.innerWidth * 0.85
+      if (window.innerWidth < 1024) return 320
+    }
+    return 360
+  }, [])
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    setIsDragging(true)
+    setStartX(e.touches[0].clientX)
+    setCurrentX(e.touches[0].clientX)
+    setDragOffset(0)
+  }, [])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    setIsDragging(true)
+    setStartX(e.clientX)
+    setCurrentX(e.clientX)
+    setDragOffset(0)
+  }, [])
+
+  /* ─── INIT & VALIDATION ─── */
+  useEffect(() => {
+    let title = "Physics Lab Session"
+    let subject = "Physics"
+    let storedTopics = null
+    let mode = "AI"
+    let role = "teacher"
+    let storedStudentId = "unknown-student"
+    let storedStudentName = "Guest Student"
+
+    try {
+      title = localStorage.getItem("sessionTitle") || title
+      subject = localStorage.getItem("sessionSubject") || subject
+      storedTopics = localStorage.getItem("sessionTopics")
+      mode = localStorage.getItem("teachingMode") || mode
+      role = localStorage.getItem("userRole") || role
+      storedStudentId = localStorage.getItem("studentId") || storedStudentId
+      storedStudentName = localStorage.getItem("studentName") || storedStudentName
+
+      const storedParticipantsOpen = localStorage.getItem("participantsOpen")
+      setIsParticipantsOpen(storedParticipantsOpen === "true")
+
+      setSessionTitle(title)
+      setSessionSubject(subject)
+      if (storedTopics) {
+        try { setTopics(JSON.parse(storedTopics)) } catch { /* keep default topics */ }
+      }
       if (mode === "Human") setTeachingMode("Human")
-      if (role === "student") setIsTeacher(false)
-      if (storedStudentId) setStudentId(storedStudentId)
+      setIsTeacher(role === "teacher")
+      setStudentId(storedStudentId)
+      setStudentName(storedStudentName)
     } catch { /* keep defaults */ }
 
+    // PDF Loading
     const loadPdf = async () => {
       try {
         const file = await getFile("session-pdf")
@@ -142,7 +317,45 @@ export default function LiveClassroomPage() {
       }
     }
     loadPdf()
-  }, [])
+
+    // Access Check
+    const checkAccess = async () => {
+      if (role === "teacher") {
+        setLoading(false)
+        return
+      }
+
+      try {
+        // 1. Check if kicked
+        const isKickedById = await checkIsIdKicked(sessionCode, storedStudentId)
+        if (isKickedById) {
+          setError("You have been kicked from this session and cannot rejoin.")
+          setLoading(false)
+          return
+        }
+
+        const isKickedByName = await checkIsKicked(sessionCode, storedStudentName)
+        if (isKickedByName) {
+          setError("You have been kicked from this session and cannot rejoin.")
+          setLoading(false)
+          return
+        }
+
+        // 2. Check registration status
+        const registered = await isStudentRegistered(sessionCode, storedStudentId)
+        if (!registered) {
+          setError("Access Denied. You did not join during the waiting time or are not registered in this session.")
+          setLoading(false)
+          return
+        }
+      } catch (err) {
+        console.error("Error verifying student access:", err)
+      }
+      setLoading(false)
+    }
+
+    checkAccess()
+  }, [sessionCode])
 
   const addToast = useCallback((text: string) => {
     const id = Date.now().toString()
@@ -286,11 +499,10 @@ export default function LiveClassroomPage() {
 
   /* ─── CLEANUP: kill speech on unmount (navigation away) ─── */
   useEffect(() => {
-    // Add beforeunload to explicitly remove student from Firebase
+    // Add beforeunload to explicitly set student offline in Firebase
     const handleBeforeUnload = () => {
       if (!isTeacher && studentId && sessionCode) {
-        // We use fetch/sendBeacon or just a fire-and-forget promise
-        removeStudent(sessionCode, studentId).catch(() => {});
+        setStudentOffline(sessionCode, studentId).catch(() => {});
       }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
@@ -300,7 +512,7 @@ export default function LiveClassroomPage() {
       window.removeEventListener("beforeunload", handleBeforeUnload);
       
       if (!isTeacher && studentId && sessionCode) {
-        removeStudent(sessionCode, studentId).catch(() => {});
+        setStudentOffline(sessionCode, studentId).catch(() => {});
       }
     }
   }, [isTeacher, studentId, sessionCode])
@@ -314,11 +526,18 @@ export default function LiveClassroomPage() {
 
   /* ─── CLASSROOM SYNC ─── */
   useEffect(() => {
-    if (!hasEntered || !sessionCode) return
+    if (!sessionCode) return
     const unsubscribe = subscribeToSession(
       sessionCode,
       (updated) => {
         if (!updated) return;
+        
+        // Redirect student to summary page if session completed in database
+        if (!isTeacher && updated.status === "Completed") {
+          router.push(`/session/${sessionCode}/summary`)
+          return
+        }
+
         // Sync topic for students
         if (!isTeacher && updated.currentTopicIndex !== undefined && updated.currentTopicIndex !== activeTopicIdx) {
           setActiveTopicIdx(updated.currentTopicIndex)
@@ -327,7 +546,7 @@ export default function LiveClassroomPage() {
       (err) => console.error("Session sync error:", err)
     )
     return () => unsubscribe()
-  }, [hasEntered, sessionCode, isTeacher, activeTopicIdx])
+  }, [sessionCode, isTeacher, activeTopicIdx, router])
 
   /* ─── STUDENTS SIM ─── */
   useEffect(() => {
@@ -405,6 +624,11 @@ export default function LiveClassroomPage() {
              return copy;
            });
         }
+      });
+
+      room.on(RoomEvent.ActiveSpeakersChanged, (speakers: any[]) => {
+        const identities = speakers.map(s => s.identity);
+        setSpeakingStudentIds(new Set(identities));
       });
 
       try {
@@ -516,7 +740,20 @@ export default function LiveClassroomPage() {
     }
   }
 
-  const handleConfirmEnd = () => { setShowEndModal(false); setEndCountdown(5); try { window.speechSynthesis.cancel() } catch { /* ok */ } }
+  const handleConfirmEnd = async () => {
+    setShowEndModal(false)
+    setEndCountdown(5)
+    try {
+      window.speechSynthesis.cancel()
+    } catch { /* ok */ }
+
+    try {
+      await endSession(sessionCode)
+    } catch (e) {
+      console.warn("Failed to end session in database:", e)
+    }
+  }
+
   useEffect(() => {
     if (endCountdown === null) return
     if (endCountdown === 0) { 
@@ -527,12 +764,16 @@ export default function LiveClassroomPage() {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
       }
-      router.push("/dashboard"); 
+      if (isTeacher) {
+        router.push(`/session/${sessionCode}/summary`)
+      } else {
+        router.push("/dashboard")
+      }
       return 
     }
     const t = setTimeout(() => setEndCountdown((c) => (c !== null ? c - 1 : null)), 1000)
     return () => clearTimeout(t)
-  }, [endCountdown, router])
+  }, [endCountdown, router, isTeacher, sessionCode])
 
   useEffect(() => {
     if (!hasEntered) return
@@ -549,6 +790,117 @@ export default function LiveClassroomPage() {
     return () => window.removeEventListener("keydown", handler)
   }, [hasEntered])
 
+  // --- Auto-Hide Toolbar Effect ---
+  useEffect(() => {
+    if (!hasEntered) return
+
+    const triggerShow = () => {
+      setShowToolbar(true)
+      if (hideTimeoutRef.current) {
+        clearTimeout(hideTimeoutRef.current)
+        hideTimeoutRef.current = null
+      }
+    }
+
+    const triggerHideWithDelay = () => {
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current)
+      hideTimeoutRef.current = setTimeout(() => {
+        if (!isHoveringToolbarRef.current) {
+          setShowToolbar(false)
+        }
+      }, 2000)
+    }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (e.clientY >= window.innerHeight - 60) {
+        triggerShow()
+      } else {
+        if (!isHoveringToolbarRef.current) {
+          triggerHideWithDelay()
+        }
+      }
+    }
+
+    const handleTouchStart = () => {
+      triggerShow()
+      triggerHideWithDelay()
+    }
+
+    window.addEventListener("mousemove", handleMouseMove)
+    window.addEventListener("touchstart", handleTouchStart)
+    
+    triggerHideWithDelay()
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove)
+      window.removeEventListener("touchstart", handleTouchStart)
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current)
+    }
+  }, [hasEntered])
+
+  // --- Collapsible Panel Outside Click & Escape Hook ---
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (
+        isParticipantsOpen &&
+        participantsPanelRef.current &&
+        !participantsPanelRef.current.contains(e.target as Node) &&
+        participantsTabRef.current &&
+        !participantsTabRef.current.contains(e.target as Node)
+      ) {
+        setIsParticipantsOpen(false)
+        localStorage.setItem("participantsOpen", "false")
+      }
+
+      if (
+        showMoreMenu &&
+        moreMenuRef.current &&
+        !moreMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowMoreMenu(false)
+      }
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (isParticipantsOpen) {
+          setIsParticipantsOpen(false)
+          localStorage.setItem("participantsOpen", "false")
+        }
+        if (showMoreMenu) {
+          setShowMoreMenu(false)
+        }
+      }
+    }
+
+    document.addEventListener("mousedown", handleOutsideClick)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isParticipantsOpen, showMoreMenu])
+
+  // --- Active Speaker Simulation Sequence ---
+  useEffect(() => {
+    if (!hasEntered) return
+    const interval = setInterval(() => {
+      if (students.length === 0) return
+      const speakCount = Math.floor(Math.random() * 2) + 1
+      const newSpeaking = new Set<string>()
+      for (let i = 0; i < speakCount; i++) {
+        const randomStudent = students[Math.floor(Math.random() * students.length)]
+        if (randomStudent && randomStudent.id) {
+          newSpeaking.add(randomStudent.id)
+        }
+      }
+      setSpeakingStudentIds(newSpeaking)
+    }, 7000)
+
+    return () => clearInterval(interval)
+  }, [hasEntered, students])
+
   const fmt = (s: number) => `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`
   const totalItems = isPdfMode ? pdfPages.length : topics.length
   const progressPct = totalItems > 0 ? Math.floor(((activeTopicIdx + 1) / totalItems) * 100) : 50
@@ -557,7 +909,34 @@ export default function LiveClassroomPage() {
   const focusDot = classFocus >= 80 ? "bg-emerald-500" : classFocus >= 65 ? "bg-amber-500" : "bg-rose-500"
   const focusText = classFocus >= 80 ? "text-emerald-400" : classFocus >= 65 ? "text-amber-400" : "text-rose-400"
 
-  /* ═══ ENTRY OVERLAY ═══ */
+  // ─── LOADING SCREEN ───
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] flex flex-col items-center justify-center text-white font-sans">
+        <div className="h-8 w-8 rounded-full border-2 border-purple-500 border-t-transparent animate-spin mb-4" />
+        <p className="text-sm text-white/60">Verifying session access...</p>
+      </div>
+    )
+  }
+
+  // ─── ERROR SCREEN ───
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] flex flex-col items-center justify-center text-white font-sans p-6 text-center">
+        <AlertCircle className="h-10 w-10 text-red-500 mb-4" />
+        <h2 className="text-lg font-bold mb-2">Access Denied</h2>
+        <p className="text-sm text-white/50 mb-6 max-w-sm">{error}</p>
+        <Link
+          href="/dashboard"
+          className="px-5 py-2.5 bg-[#1a1a1a] rounded-xl text-xs font-semibold hover:bg-[#242424] border border-white/5 transition-all"
+        >
+          Return to Dashboard
+        </Link>
+      </div>
+    )
+  }
+
+  /* ─── ENTRY OVERLAY ─── */
   if (!hasEntered) {
     return (
       <div className="fixed inset-0 bg-[#08080A] z-[99] flex flex-col items-center justify-center text-center p-6 font-sans antialiased">
@@ -600,6 +979,42 @@ export default function LiveClassroomPage() {
     )
   }
 
+
+  const drawerWidth = getDrawerWidth()
+  let transformStr = "translate3d(100%, 0, 0)"
+  let openRatio = 0
+  if (isParticipantsOpen) {
+    if (isDragging && dragOffset > 0) {
+      openRatio = Math.max(0, 1 - dragOffset / drawerWidth)
+      transformStr = `translate3d(${Math.min(drawerWidth, dragOffset)}px, 0, 0)`
+    } else {
+      openRatio = 1
+      transformStr = "translate3d(0, 0, 0)"
+    }
+  } else {
+    if (isDragging && dragOffset < 0) {
+      openRatio = Math.min(1, -dragOffset / drawerWidth)
+      transformStr = `translate3d(${Math.max(0, drawerWidth + dragOffset)}px, 0, 0)`
+    } else {
+      openRatio = 0
+      transformStr = "translate3d(100%, 0, 0)"
+    }
+  }
+
+  const overlayStyle = {
+    opacity: openRatio * 0.25,
+    backdropFilter: `blur(${openRatio * 10}px)`,
+    WebkitBackdropFilter: `blur(${openRatio * 10}px)`,
+    transition: isDragging ? "none" : "opacity 300ms cubic-bezier(0.16, 1, 0.3, 1), backdrop-filter 300ms cubic-bezier(0.16, 1, 0.3, 1)",
+    pointerEvents: openRatio > 0.01 ? ("auto" as const) : ("none" as const),
+  }
+
+  const filteredStudents = students.filter((s) => {
+    const matchesSearch = s.name?.toLowerCase().includes(searchQuery.toLowerCase())
+    const isSpeaking = speakingStudentIds.has(s.id)
+    const matchesSpeaker = !showOnlyActive || isSpeaking
+    return matchesSearch && matchesSpeaker
+  })
 
   /* ═══════════════════════════════════════════
      FULL CLASSROOM — PRODUCTION LAYOUT
@@ -644,6 +1059,107 @@ export default function LiveClassroomPage() {
         .cscroll::-webkit-scrollbar{width:3px}
         .cscroll::-webkit-scrollbar-track{background:transparent}
         .cscroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.06);border-radius:10px}
+
+        @keyframes audioRing {
+          0% { transform: scale(1); opacity: 1; border-color: rgba(168, 85, 247, 0.85); box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); }
+          50% { transform: scale(1.08); opacity: 0.5; border-color: rgba(168, 85, 247, 0.4); box-shadow: 0 0 8px 2px rgba(168, 85, 247, 0.2); }
+          100% { transform: scale(1.15); opacity: 0; border-color: rgba(168, 85, 247, 0); box-shadow: 0 0 12px 4px rgba(168, 85, 247, 0); }
+        }
+        .audio-ring {
+          position: absolute;
+          inset: -2px;
+          border: 2px solid rgba(168, 85, 247, 0.65);
+          border-radius: 12px;
+          animation: audioRing 1.6s cubic-bezier(0.1, 0.8, 0.3, 1) infinite;
+          pointer-events: none;
+          z-index: 5;
+        }
+
+        /* Drawer Overlay */
+        .drawer-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 100;
+          background-color: rgba(0, 0, 0, 0.25);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          will-change: opacity, backdrop-filter;
+        }
+
+        /* Drawer container */
+        .drawer-container {
+          position: fixed;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          z-index: 110;
+          background-color: #0E0E10;
+          border-left: 1px solid rgba(255, 255, 255, 0.06);
+          box-shadow: -10px 0 30px rgba(0, 0, 0, 0.6);
+          will-change: transform;
+          width: 85vw;
+        }
+        @media (min-width: 768px) {
+          .drawer-container {
+            width: 320px;
+          }
+        }
+        @media (min-width: 1024px) {
+          .drawer-container {
+            width: 360px;
+          }
+        }
+
+        /* Drawer handle tab */
+        .drawer-handle {
+          position: fixed;
+          right: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          z-index: 90;
+          background-color: #111113;
+          border-top: 1px solid rgba(147, 51, 234, 0.3);
+          border-left: 1px solid rgba(147, 51, 234, 0.3);
+          border-bottom: 1px solid rgba(147, 51, 234, 0.3);
+          border-radius: 12px 0 0 12px;
+          width: 24px;
+          height: 120px;
+          cursor: pointer;
+          transition: width 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          box-shadow: -2px 0 15px rgba(124, 58, 237, 0.15);
+        }
+        .drawer-handle:hover {
+          width: 32px;
+          background-color: #16161a;
+          box-shadow: -4px 0 20px rgba(124, 58, 237, 0.35);
+          border-color: rgba(147, 51, 234, 0.5);
+        }
+
+        /* Instagram-style Hint Indicator */
+        .hint-indicator {
+          position: fixed;
+          right: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          z-index: 85;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+          pointer-events: none;
+        }
+
+        @keyframes hintArrow {
+          0%, 100% { transform: translateX(0); opacity: 0.1; }
+          50% { transform: translateX(-4px); opacity: 0.7; }
+        }
+        .hint-arrow {
+          animation: hintArrow 2s ease-in-out infinite;
+        }
       `}</style>
 
       {/* ═══ TOP BAR ═══ */}
@@ -686,11 +1202,10 @@ export default function LiveClassroomPage() {
       </header>
 
       {/* ═══ MAIN AREA ═══ */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0 relative">
 
-        {/* ─── LEFT 70% ─── */}
-        <div className="w-full lg:w-[70%] flex flex-col p-4 gap-3 min-h-[50vh] lg:min-h-0 pb-4 lg:pb-[84px] shrink-0 overflow-hidden">
-
+        {/* ─── LEFT COLUMN (AI Instructor & Slides) ─── */}
+        <div className="flex-1 flex flex-col p-4 gap-3 min-h-[50vh] lg:min-h-0 pb-4 lg:pb-[84px] overflow-hidden">
           {/* ── STUDENT TILES GALLERY (TOP) ── */}
           <div className="flex-none flex flex-col mb-2">
             <h4 className="text-[10px] font-black uppercase tracking-[.12em] text-white/50 pb-2.5 mb-2.5 border-b border-white/[.06] flex items-center justify-between flex-shrink-0">
@@ -703,7 +1218,7 @@ export default function LiveClassroomPage() {
             <div className="flex overflow-x-auto gap-3 pb-2 snap-x cscroll">
               {/* Local User Tile */}
               <div className={`w-48 md:w-64 lg:w-72 shrink-0 snap-center relative aspect-video rounded-xl border ${localMetrics.status === "focused" ? "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" : localMetrics.status === "distracted" ? "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.35)]" : localMetrics.status === "away" ? "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]" : "border-gray-600"} bg-[#14141b] overflow-hidden transition-all duration-500`}>
-                <div className="absolute inset-0 z-0">
+              <div className="absolute inset-0 z-0">
                   <StudentCamera
                     sessionCode={sessionCode}
                     studentId={studentId}
@@ -712,6 +1227,11 @@ export default function LiveClassroomPage() {
                     onLocalFocusUpdate={setLocalMetrics}
                     onStreamReady={handleStreamReady}
                   />
+                </div>
+                {/* Focus score badge — visible to all */}
+                <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-[#0a0a0f]/80 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-mono text-white/80 z-10 gap-1.5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${localMetrics.status === "focused" ? "bg-emerald-500" : localMetrics.status === "distracted" ? "bg-amber-500" : localMetrics.status === "away" ? "bg-rose-500" : "bg-gray-500"}`} />
+                  {localMetrics.score}%
                 </div>
                 <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-medium text-white shadow-black drop-shadow-md z-10">
                   {isTeacher ? "Teacher (You)" : "You"}
@@ -735,6 +1255,7 @@ export default function LiveClassroomPage() {
                       <video 
                         autoPlay 
                         playsInline 
+                        muted
                         className="absolute inset-0 w-full h-full object-cover z-0"
                         ref={node => {
                           if (node && node.srcObject !== remoteStreams[student.id]) {
@@ -760,7 +1281,7 @@ export default function LiveClassroomPage() {
             </div>
           </div>
 
-          {/* ── AI TILE ── */}
+          {/* AI TILE */}
           <div
             className={`rounded-2xl border-2 p-5 flex gap-5 flex-shrink-0 transition-all duration-500 relative ${
               aiSpeechState === "speaking" ? "bg-[#131316] tile-glow"
@@ -828,7 +1349,7 @@ export default function LiveClassroomPage() {
             </div>
           </div>
 
-          {/* ── CONTENT AREA — fills remaining height ── */}
+          {/* CONTENT AREA — fills remaining height */}
           <div className="flex-1 bg-[#111111] rounded-2xl overflow-hidden flex flex-col relative min-h-0 border border-white/[.06]">
             {/* Image / Fallback — fills entire area */}
             <div className="flex-1 relative overflow-hidden min-h-0">
@@ -861,9 +1382,7 @@ export default function LiveClassroomPage() {
           </div>
         </div>
 
-        {/* ─── RIGHT 30% ─── */}
         <aside className="w-full lg:w-[30%] flex-1 border-t lg:border-t-0 lg:border-l border-white/[.06] bg-[#0A0A0A] flex flex-col min-h-0 pb-[84px] lg:pb-0">
-
           {/* ── DOUBT CHAT ── */}
           <div className="flex-1 p-4 flex flex-col overflow-hidden min-h-0">
             <h4 className="text-[10px] font-black uppercase tracking-[.12em] text-white/50 pb-2.5 mb-2 border-b border-white/[.06] flex items-center justify-between flex-shrink-0">
@@ -908,11 +1427,32 @@ export default function LiveClassroomPage() {
         </aside>
       </div>
 
-      {/* ═══ TOOLBAR — single floating pill ═══ */}
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3">
+      {/* ═══ IM-ARRANGEABLE TOOLBAR — floats, auto-hides ═══ */}
+      <div
+        onMouseEnter={() => {
+          isHoveringToolbarRef.current = true
+          setShowToolbar(true)
+          if (hideTimeoutRef.current) {
+            clearTimeout(hideTimeoutRef.current)
+            hideTimeoutRef.current = null
+          }
+        }}
+        onMouseLeave={() => {
+          isHoveringToolbarRef.current = false
+          if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current)
+          hideTimeoutRef.current = setTimeout(() => {
+            if (!isHoveringToolbarRef.current) {
+              setShowToolbar(false)
+            }
+          }, 2000)
+        }}
+        className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[45] flex items-center gap-3 transition-all duration-300 ease-in-out ${
+          showToolbar ? "translate-y-0 opacity-100" : "translate-y-28 opacity-0 pointer-events-none"
+        }`}
+      >
         <div
-          className="flex items-center px-2 rounded-2xl"
-          style={{ height: 64, background: "#1A1A1A", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,.06)" }}
+          className="flex items-center px-2 rounded-2xl shadow-2xl border border-white/[.08] backdrop-blur-md relative"
+          style={{ height: 64, background: "rgba(26, 26, 26, 0.85)" }}
         >
           {/* Mic */}
           <button id="mic-toggle" onClick={() => { setMicOn(v => !v); addToast(micOn ? "Mic off" : "Mic on") }}
@@ -920,78 +1460,125 @@ export default function LiveClassroomPage() {
             {micOn ? <Mic className="h-[18px] w-[18px]" /> : <MicOff className="h-[18px] w-[18px]" />}
             <span className="text-[11px] text-white/35 font-medium">Mic</span>
           </button>
+
           {/* Camera */}
           <button id="camera-toggle" onClick={() => { setVideoOn(v => !v); addToast(videoOn ? "Camera off" : "Camera on") }}
             className={`flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl transition-all cursor-pointer ${videoOn ? "text-white hover:bg-white/5" : "text-red-400 bg-red-600/10"}`}>
             {videoOn ? <Video className="h-[18px] w-[18px]" /> : <VideoOff className="h-[18px] w-[18px]" />}
             <span className="text-[11px] text-white/35 font-medium">Camera</span>
           </button>
+
+          {/* Screen Share */}
+          <button id="screenshare-toggle" onClick={() => { setScreenSharing(v => !v); addToast(screenSharing ? "Screen share stopped" : "Screen sharing started") }}
+            className={`flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl transition-all cursor-pointer ${screenSharing ? "text-purple-400 bg-purple-600/10" : "text-white hover:bg-white/5"}`}>
+            <ScreenShare className="h-[18px] w-[18px]" />
+            <span className="text-[11px] text-white/35 font-medium">Share</span>
+          </button>
+
           {/* Hand */}
           <button id="hand-raise-toggle" onClick={() => { setHandRaised(v => !v); addToast(handRaised ? "Hand lowered" : "Hand raised") }}
             className={`flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl transition-all cursor-pointer ${handRaised ? "text-amber-400 bg-amber-600/10" : "text-white/50 hover:bg-white/5"}`}>
             <Hand className="h-[18px] w-[18px]" />
             <span className="text-[11px] text-white/35 font-medium">Hand</span>
           </button>
-          {/* Chat */}
-          <button onClick={() => setChatOpen(v => !v)}
-            className={`flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl transition-all cursor-pointer ${chatOpen ? "text-purple-400 bg-purple-600/10" : "text-white/50 hover:bg-white/5"}`}>
-            <MessageSquare className="h-[18px] w-[18px]" />
-            <span className="text-[11px] text-white/35 font-medium">Chat</span>
-          </button>
 
-          {/* Divider */}
-          <div className="w-px h-8 bg-white/8 mx-1.5" />
-
-          {/* Teacher-only controls (always rendered for cleaner layout, hidden for students) */}
-          {isTeacher && teachingMode === "AI" && (
-            <>
-              {/* Pause/Resume AI */}
-              <button onClick={() => {
-                if (aiSpeechState === "speaking") {
-                  try { window.speechSynthesis.pause() } catch { /* ok */ }
-                  setAiSpeechState("paused"); addToast("AI paused")
-                } else {
-                  try { window.speechSynthesis.resume() } catch { /* ok */ }
-                  setAiSpeechState("speaking"); addToast("AI resumed")
-                }
-              }}
-                className="flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl text-white/50 hover:bg-white/5 transition-all cursor-pointer">
-                {aiSpeechState === "speaking" ? <Pause className="h-[18px] w-[18px]" /> : <Play className="h-[18px] w-[18px]" />}
-                <span className="text-[11px] text-white/35 font-medium">{aiSpeechState === "speaking" ? "Pause" : "Resume"}</span>
-              </button>
-              {/* Take Over */}
-              <button onClick={() => { setTeachingMode("Human"); try { window.speechSynthesis.cancel() } catch { /* ok */ }; setAiSpeechState("idle"); addToast("You took over") }}
-                className="flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl text-purple-400/70 hover:bg-purple-600/10 transition-all cursor-pointer">
-                <Eye className="h-[18px] w-[18px]" />
-                <span className="text-[11px] text-white/35 font-medium">Take Over</span>
-              </button>
-              {/* Record */}
-              <button onClick={() => { const v = !isRecording; setIsRecording(v); addToast(v ? "Recording" : "Saved") }}
-                className={`flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl transition-all cursor-pointer ${isRecording ? "text-red-400 bg-red-600/10" : "text-white/50 hover:bg-white/5"}`}>
-                <span className={`h-[18px] w-[18px] flex items-center justify-center`}>
-                  <span className={`h-3 w-3 rounded-full ${isRecording ? "bg-red-500 animate-pulse" : "bg-white/20"}`} />
-                </span>
-                <span className="text-[11px] text-white/35 font-medium">Record</span>
-              </button>
-
-              {/* Divider */}
-              <div className="w-px h-8 bg-white/8 mx-1.5" />
-            </>
-          )}
-
-          {/* Voice mute */}
+          {/* Participants Panel Toggle */}
           <button onClick={() => {
-            setSpeechEnabled(v => {
-              const next = !v
-              if (!next) { try { window.speechSynthesis.cancel() } catch { /* ok */ }; setAiSpeechState("idle") }
-              addToast(next ? "Voice on" : "Voice muted")
-              return next
-            })
+            const next = !isParticipantsOpen
+            setIsParticipantsOpen(next)
+            if (next) {
+              handleParticipantsInteraction()
+            }
+            localStorage.setItem("participantsOpen", next ? "true" : "false")
           }}
-            className={`flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl transition-all cursor-pointer ${speechEnabled ? "text-white/50 hover:bg-white/5" : "text-red-400 bg-red-600/10"}`}>
-            {speechEnabled ? <Volume2 className="h-[18px] w-[18px]" /> : <VolumeX className="h-[18px] w-[18px]" />}
-            <span className="text-[11px] text-white/35 font-medium">Voice</span>
+            className={`flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl transition-all cursor-pointer ${isParticipantsOpen ? "text-purple-400 bg-purple-600/10" : "text-white/50 hover:bg-white/5"}`}>
+            <Users className="h-[18px] w-[18px]" />
+            <span className="text-[11px] text-white/35 font-medium">People</span>
           </button>
+
+          {/* More Popover Button */}
+          <div className="relative h-full flex items-center">
+            <button
+              onClick={() => setShowMoreMenu(v => !v)}
+              className={`flex flex-col items-center justify-center gap-0.5 px-3.5 h-full rounded-xl transition-all cursor-pointer ${showMoreMenu ? "text-purple-400 bg-purple-600/10" : "text-white/50 hover:bg-white/5"}`}
+            >
+              <MoreHorizontal className="h-[18px] w-[18px]" />
+              <span className="text-[11px] text-white/35 font-medium">More</span>
+            </button>
+
+            {/* Premium Popover for Extra Controls */}
+            {showMoreMenu && (
+              <div
+                ref={moreMenuRef}
+                className="absolute bottom-20 right-0 bg-[#16161a]/95 border border-white/[.08] rounded-xl p-2 w-48 shadow-2xl flex flex-col gap-1 z-50 backdrop-blur-md"
+              >
+                {/* Voice speech synthesizer toggle */}
+                <button
+                  onClick={() => {
+                    setSpeechEnabled(v => {
+                      const next = !v
+                      if (!next) { try { window.speechSynthesis.cancel() } catch { /* ok */ }; setAiSpeechState("idle") }
+                      addToast(next ? "Voice on" : "Voice muted")
+                      return next
+                    })
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-white/5 rounded-lg text-xs font-semibold flex items-center justify-between text-white/80"
+                >
+                  <span className="flex items-center gap-2">
+                    {speechEnabled ? <Volume2 className="h-3.5 w-3.5 text-purple-400" /> : <VolumeX className="h-3.5 w-3.5 text-red-400" />}
+                    AI Voice
+                  </span>
+                  <span className="text-[10px] text-white/30">{speechEnabled ? "On" : "Off"}</span>
+                </button>
+
+                {/* Record session */}
+                <button
+                  onClick={() => { const v = !isRecording; setIsRecording(v); addToast(v ? "Recording session started" : "Recording saved") }}
+                  className="w-full px-3 py-2 text-left hover:bg-white/5 rounded-lg text-xs font-semibold flex items-center justify-between text-white/80"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full ${isRecording ? "bg-red-500 animate-pulse" : "bg-white/35"}`} />
+                    Record Class
+                  </span>
+                  <span className="text-[10px] text-white/30">{isRecording ? "Recording" : "Start"}</span>
+                </button>
+
+                {/* Divider if teacher */}
+                {isTeacher && teachingMode === "AI" && <div className="h-px bg-white/5 my-1" />}
+
+                {/* Teacher-only: Pause/Resume AI */}
+                {isTeacher && teachingMode === "AI" && (
+                  <button
+                    onClick={() => {
+                      if (aiSpeechState === "speaking") {
+                        try { window.speechSynthesis.pause() } catch { /* ok */ }
+                        setAiSpeechState("paused"); addToast("AI paused")
+                      } else {
+                        try { window.speechSynthesis.resume() } catch { /* ok */ }
+                        setAiSpeechState("speaking"); addToast("AI resumed")
+                      }
+                      setShowMoreMenu(false)
+                    }}
+                    className="w-full px-3 py-2 text-left hover:bg-white/5 rounded-lg text-xs font-semibold flex items-center gap-2 text-white/80"
+                  >
+                    {aiSpeechState === "speaking" ? <Pause className="h-3.5 w-3.5 text-amber-400" /> : <Play className="h-3.5 w-3.5 text-emerald-400" />}
+                    {aiSpeechState === "speaking" ? "Pause Lecture" : "Resume Lecture"}
+                  </button>
+                )}
+
+                {/* Teacher-only: Take Over */}
+                {isTeacher && teachingMode === "AI" && (
+                  <button
+                    onClick={() => { setTeachingMode("Human"); try { window.speechSynthesis.cancel() } catch { /* ok */ }; setAiSpeechState("idle"); addToast("You took over classroom"); setShowMoreMenu(false) }}
+                    className="w-full px-3 py-2 text-left hover:bg-white/5 rounded-lg text-xs font-semibold flex items-center gap-2 text-purple-400"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    Take Over Class
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Leave — separate red pill */}
@@ -1038,6 +1625,233 @@ export default function LiveClassroomPage() {
           <p className="text-[10px] text-white/20 mt-4">Returning to dashboard in {endCountdown}s</p>
         </div>
       )}
+
+      {/* ─── OVERLAY ─── */}
+      <div 
+        className="drawer-overlay"
+        style={overlayStyle}
+        onClick={() => {
+          setIsParticipantsOpen(false)
+          localStorage.setItem("participantsOpen", "false")
+        }}
+      />
+
+      {/* ─── EDGE SWIPE ZONE (MOBILE) ─── */}
+      {!isParticipantsOpen && (
+        <div 
+          className="fixed right-0 top-0 bottom-0 w-6 z-[80] bg-transparent touch-none"
+          onTouchStart={handleTouchStart}
+        />
+      )}
+
+      {/* ─── DRAWER HANDLE ─── */}
+      {!isParticipantsOpen && (
+        <button
+          ref={participantsTabRef}
+          type="button"
+          onMouseEnter={() => {
+            setIsParticipantsOpen(true)
+            handleParticipantsInteraction()
+            localStorage.setItem("participantsOpen", "true")
+          }}
+          onClick={() => {
+            setIsParticipantsOpen(true)
+            handleParticipantsInteraction()
+            localStorage.setItem("participantsOpen", "true")
+          }}
+          onMouseDown={handleMouseDown}
+          onTouchStart={handleTouchStart}
+          className="drawer-handle shadow-lg border-none outline-none focus:outline-none"
+        >
+          <div className="flex flex-col items-center gap-2">
+            <span className="text-[10px] text-purple-400 font-bold animate-pulse">◀</span>
+            <Users className="h-3.5 w-3.5 text-white/70" />
+            <span 
+              style={{ writingMode: "vertical-rl" }} 
+              className="text-[9px] font-black uppercase tracking-[0.2em] text-white/50 select-none my-1"
+            >
+              People
+            </span>
+          </div>
+        </button>
+      )}
+
+      {/* ─── INSTAGRAM HINT ─── */}
+      {!isParticipantsOpen && showHint && (
+        <div className="hint-indicator">
+          {/* page indicator dot */}
+          <div className="h-1.5 w-1.5 rounded-full bg-purple-500 shadow-lg shadow-purple-500/50 animate-pulse" />
+          <div className="h-1 w-1 rounded-full bg-white/20" />
+          {/* animated arrow */}
+          <div className="hint-arrow mt-2 bg-purple-600/90 text-white rounded-full p-1 border border-purple-400/20 shadow-md">
+            <span className="text-[9px] font-black leading-none block">←</span>
+          </div>
+        </div>
+      )}
+
+      {/* ─── DRAWER CONTAINER ─── */}
+      <div
+        ref={drawerRef}
+        className="drawer-container flex flex-col"
+        style={{
+          transform: transformStr,
+          transition: isDragging ? "none" : "transform 300ms cubic-bezier(0.16, 1, 0.3, 1)",
+        }}
+        onTouchStart={(e) => {
+          // Allow swipe dismissal from within the drawer container if started on the edge
+          const touchX = e.touches[0].clientX
+          const rect = drawerRef.current?.getBoundingClientRect()
+          if (rect && touchX < rect.left + 30) {
+            setIsDragging(true)
+            setStartX(touchX)
+            setCurrentX(touchX)
+            setDragOffset(0)
+          }
+        }}
+      >
+        {/* Drawer Header */}
+        <div className="h-14 border-b border-white/[.06] px-5 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <Users className="h-4 w-4 text-purple-400" />
+            <h3 className="font-bold text-sm text-white">Participants</h3>
+            <span className="px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-[10px] font-bold text-purple-400">
+              {students.length}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setIsParticipantsOpen(false)
+              localStorage.setItem("participantsOpen", "false")
+            }}
+            className="h-8 w-8 rounded-lg bg-white/[.02] border border-white/5 flex items-center justify-center text-white/50 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Drawer Controls (Search & Filters) */}
+        <div className="p-4 border-b border-white/[.06] space-y-3 flex-shrink-0">
+          {/* Search bar */}
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-white/30" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search people..."
+              className="w-full pl-9 pr-4 py-2 bg-[#16161A] border border-white/[.06] rounded-xl text-xs focus:outline-none focus:border-purple-500/40 text-white placeholder:text-white/35 transition-all"
+            />
+          </div>
+
+          {/* Filters */}
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider">Filters</span>
+            <button
+              onClick={() => setShowOnlyActive(prev => !prev)}
+              className={`px-2.5 py-1 rounded-lg border text-[10px] font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                showOnlyActive
+                  ? "bg-purple-600/10 border-purple-500/30 text-purple-400"
+                  : "bg-white/[.02] border-white/10 text-white/60 hover:text-white hover:bg-white/5"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${showOnlyActive ? "bg-purple-400 animate-pulse" : "bg-white/30"}`} />
+              Active Speakers
+            </button>
+          </div>
+        </div>
+
+        {/* Participant List */}
+        <div className="flex-1 overflow-y-auto cscroll p-3 space-y-1">
+          {filteredStudents.length > 0 ? (
+            filteredStudents.map((s) => {
+              const isSpeaking = speakingStudentIds.has(s.id);
+              const { isMuted, hasHandRaised, connectionQual } = getStudentProps(s);
+              
+              // connection icon
+              let connColor = "text-emerald-500";
+              if (connectionQual === "Good") connColor = "text-amber-500";
+              if (connectionQual === "Fair") connColor = "text-rose-500";
+
+              return (
+                <div
+                  key={s.id}
+                  className={`flex items-center justify-between p-2.5 rounded-xl transition-all border border-transparent ${
+                    isSpeaking 
+                      ? "bg-purple-950/15 border-purple-500/20" 
+                      : "hover:bg-white/[.02]"
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Avatar with speaking animation */}
+                    <div className="relative">
+                      {isSpeaking && (
+                        <div className="absolute -inset-1 rounded-full border border-purple-500/80 animate-ping opacity-70" />
+                      )}
+                      <div
+                        className={`h-9 w-9 rounded-full bg-gradient-to-br from-[#1e1e2e] to-[#2d2d44] border flex items-center justify-center text-xs font-bold shadow-md relative z-10 transition-all ${
+                          isSpeaking ? "border-purple-400 ring-2 ring-purple-600/30" : "border-white/10"
+                        }`}
+                      >
+                        {s.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
+                      </div>
+                      {/* focus dot status */}
+                      <span className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border border-[#0E0E10] z-20 ${
+                        s.status === "active" ? "bg-emerald-500" : s.status === "idle" ? "bg-amber-500" : s.status === "distracted" ? "bg-rose-500" : "bg-gray-500"
+                      }`} />
+                    </div>
+
+                    {/* Name & status */}
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                        {s.name}
+                        {s.id === studentId && (
+                          <span className="text-[8px] bg-purple-500/25 px-1 py-0.2 rounded font-black text-purple-300">YOU</span>
+                        )}
+                      </span>
+                      <span className="text-[10px] text-white/30 truncate uppercase tracking-wider font-semibold">
+                        {s.status} • {s.engagementScore}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Actions & Status Indicators */}
+                  <div className="flex items-center gap-2">
+                    {/* hand raise */}
+                    {hasHandRaised && (
+                      <div className="bg-amber-500/15 border border-amber-500/30 rounded-lg p-1.5 text-amber-400 animate-bounce">
+                        <Hand className="h-3 w-3" />
+                      </div>
+                    )}
+
+                    {/* mic status */}
+                    <div className={`p-1.5 rounded-lg border ${
+                      isMuted 
+                        ? "bg-red-500/10 border-red-500/20 text-red-400" 
+                        : "bg-white/[.02] border-white/5 text-white/40"
+                    }`}>
+                      {isMuted ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
+                    </div>
+
+                    {/* connection quality */}
+                    <div className={`p-1.5 rounded-lg bg-white/[.02] border border-white/5 ${connColor}`} title={`Connection: ${connectionQual}`}>
+                      <svg className="h-3 w-3 fill-current" viewBox="0 0 24 24">
+                        <rect x="3" y="16" width="3" height="5" rx="0.5" opacity={connectionQual === "Fair" ? 0.3 : 1} />
+                        <rect x="9" y="11" width="3" height="10" rx="0.5" opacity={connectionQual === "Fair" || connectionQual === "Good" ? 0.3 : 1} />
+                        <rect x="15" y="6" width="3" height="15" rx="0.5" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="text-center py-10 space-y-2">
+              <Users className="h-8 w-8 text-white/10 mx-auto" />
+              <p className="text-xs text-white/30">No participants found</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

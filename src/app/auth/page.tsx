@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { ArrowLeft, Sparkles, Loader2, AlertCircle } from "lucide-react"
@@ -10,10 +10,16 @@ import {
   signUpWithEmail,
 } from "@/lib/auth-service"
 import { joinSession } from "@/lib/session-service"
+import { LoadingScreen } from "@/components/ui/loading-screen"
 
 export default function AuthPage() {
+  const [isLoading, setIsLoading] = useState(true)
   const [tab, setTab] = useState<"teacher" | "student">("teacher")
   const [teacherMode, setTeacherMode] = useState<"signin" | "signup">("signin")
+
+  const handleLoadingComplete = useCallback(() => {
+    setIsLoading(false)
+  }, [])
 
   // Form states
   const [name, setName] = useState("")
@@ -39,6 +45,10 @@ export default function AuthPage() {
       const role = params.get("role")
       if (role === "student") {
         setTab("student")
+      }
+      const code = params.get("code")
+      if (code) {
+        setSessionCode(code.toUpperCase())
       }
     }
   }, [])
@@ -177,7 +187,13 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#0A0A0A] font-sans antialiased text-white">
+    <>
+      {isLoading && <LoadingScreen onComplete={handleLoadingComplete} />}
+      <div
+        className={`flex min-h-screen bg-[#0A0A0A] font-sans antialiased text-white transition-opacity duration-700 ${
+          isLoading ? "opacity-0" : "opacity-100"
+        }`}
+      >
       {/* ─── Left Side: Branding, Testimonial & Stats ─── */}
       <div className="relative hidden w-1/2 flex-col justify-between border-r border-[#1a1a1a] bg-[#0A0A0A] p-16 lg:flex overflow-hidden">
         {/* Subtle glowing backgrounds */}
@@ -622,5 +638,6 @@ export default function AuthPage() {
         </div>
       </div>
     </div>
+  </>
   )
 }
