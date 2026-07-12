@@ -27,6 +27,7 @@ import {
   VideoOff as CameraOff,
   Search,
   MoreHorizontal,
+  Loader2,
 } from "lucide-react"
 
 import { getFile } from "@/lib/fileStorage"
@@ -34,10 +35,9 @@ import { extractPDFPages } from "@/lib/pdfParser"
 import StudentCamera from "@/components/StudentCamera"
 import type { FocusMetrics } from "@/hooks/useFocusTracker"
 import { subscribeToStudents, subscribeToSession, syncClassroomProgress, setStudentOffline, checkIsIdKicked, checkIsKicked, isStudentRegistered, endSession } from "@/lib/session-service"
+import { classroomContext } from "@/lib/classroom-context"
 
 /* ─── MOCK DATA ─── */
-
-const MOCK_TOPICS = ["Introduction to Thermodynamics", "The Carnot Cycle", "Concept of Entropy"]
 
 const DOUBT_RESPONSES = [
   "Excellent question! In thermodynamics, we define systems as open, closed, or isolated. Energy can cross boundaries in a closed system, but matter cannot.",
@@ -47,6 +47,62 @@ const DOUBT_RESPONSES = [
 ]
 
 
+const renderTranscriptText = (
+  text: string,
+  inlineImageUrl: string | null,
+  isGeneratingImage: boolean,
+  imageError: string | null,
+  aiSpeechState: string
+) => {
+  if (!text) return null;
+  const parts = text.split(/\n/);
+  
+  return (
+    <div className="space-y-2">
+      {parts.map((part, index) => {
+        if (part.startsWith("IMAGE_PROMPT:")) {
+          const promptText = part.replace("IMAGE_PROMPT:", "").trim();
+          return (
+            <div key={index} className="my-3 border border-white/5 rounded-xl overflow-hidden bg-black/40 p-3">
+              <span className="text-[10px] text-purple-400 font-mono block mb-1">IMAGE PROMPT: {promptText}</span>
+              {isGeneratingImage && (
+                <div className="h-48 w-full flex items-center justify-center bg-[#151515] rounded-lg">
+                  <Loader2 className="animate-spin text-purple-400 h-5 w-5" />
+                  <span className="text-xs text-white/50 ml-2">Generating inline visualization via Flux...</span>
+                </div>
+              )}
+              {imageError && (
+                <div className="h-48 w-full flex items-center justify-center bg-[#2b1515] rounded-lg border border-red-500/20 px-4 text-center">
+                  <span className="text-xs text-red-400 font-medium">⚠️ {imageError}</span>
+                </div>
+              )}
+              {inlineImageUrl && !isGeneratingImage && !imageError && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={inlineImageUrl}
+                  alt="Flux visualization"
+                  className="rounded-lg max-h-64 object-cover w-full shadow-lg border border-white/10"
+                />
+              )}
+            </div>
+          );
+        }
+        return (
+          <p
+            key={index}
+            style={{ fontSize: 15, lineHeight: 1.6 }}
+            className={`font-medium transition-colors duration-300 ${
+              aiSpeechState === "speaking" ? "text-purple-300" : "text-white/35"
+            }`}
+          >
+            {part}
+          </p>
+        );
+      })}
+    </div>
+  );
+};
+
 /* ─── COMPONENT ─── */
 
 export default function LiveClassroomPage() {
@@ -54,9 +110,9 @@ export default function LiveClassroomPage() {
   const router = useRouter()
   const sessionCode = ((params.code as string) || "UNKNOWN").toUpperCase()
 
-  const [sessionTitle, setSessionTitle] = useState("Physics Lab Session")
-  const [sessionSubject, setSessionSubject] = useState("Physics")
-  const [topics, setTopics] = useState<string[]>(MOCK_TOPICS)
+  const [sessionTitle, setSessionTitle] = useState("")
+  const [sessionSubject, setSessionSubject] = useState("")
+  const [topics, setTopics] = useState<string[]>([])
   const [teachingMode, setTeachingMode] = useState<"AI" | "Human">("AI")
   const [isTeacher, setIsTeacher] = useState(true)
   const isStudent = !isTeacher;
@@ -83,12 +139,24 @@ export default function LiveClassroomPage() {
   const [liveSubtitles, setLiveSubtitles] = useState("")
   const [speechEnabled, setSpeechEnabled] = useState(true)
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null)
+  
+  // Lecture pause/resume state machine
+  const [lecturePlayState, setLecturePlayState] = useState<"PLAYING" | "PAUSED_FOR_DOUBT" | "RESUMING">("PLAYING")
+  const lectureAbortRef = useRef<AbortController | null>(null)
+  const savedLectureStateRef = useRef<{ topicIdx: number; fullTranscript: string; sentenceBuffer: string; } | null>(null)
+  const resumePendingRef = useRef<boolean>(false)
+
+  const prefetchedLectures = useRef<Record<string, { promise: Promise<Response>, time: number, consumed: boolean, fullText?: string }>>({})
 
   const [transcript, setTranscript] = useState("")
   const [pastTranscripts, setPastTranscripts] = useState<string[]>([])
   const [topicImageUrl, setTopicImageUrl] = useState<string | null>(null)
   const [imageLoaded, setImageLoaded] = useState(false)
   const [imageFading, setImageFading] = useState(false)
+  const [lectureHistory, setLectureHistory] = useState<Array<{ role: string, content: string }>>([])
+  const [inlineImageUrl, setInlineImageUrl] = useState<string | null>(null)
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false)
+  const [imageError, setImageError] = useState<string | null>(null)
 
   const [students, setStudents] = useState<any[]>([])
   const [classFocus, setClassFocus] = useState(0)
@@ -102,11 +170,18 @@ export default function LiveClassroomPage() {
   const [isAnswering, setIsAnswering] = useState(false)
   const isAnsweringRef = useRef(false)
   const transcriptRef = useRef<string[]>([])
-  const [messages, setMessages] = useState<Array<{
-    id: string; sender: string; text: string; time: string; isAI: boolean
-  }>>([
-    { id: "welcome", sender: "Professor AI", text: "Welcome to today's session. Type any doubts here and I'll pause to answer.", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: true },
-  ])
+  const [messages, setMessages] = useState(classroomContext.getState().conversationHistory)
+
+  useEffect(() => {
+    // Initial welcome message if empty
+    if (classroomContext.getState().conversationHistory.length === 0) {
+      classroomContext.addMessage({ id: "welcome", sender: "Professor AI", text: "Welcome to today's session. Type any doubts here and I'll pause to answer.", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: true, role: "assistant" })
+    }
+    const unsubscribe = classroomContext.subscribe((state) => {
+      setMessages(state.conversationHistory)
+    })
+    return unsubscribe
+  }, [])
   const chatEndRef = useRef<HTMLDivElement>(null)
   const transcriptEndRef = useRef<HTMLDivElement>(null)
 
@@ -357,102 +432,68 @@ export default function LiveClassroomPage() {
     checkAccess()
   }, [sessionCode])
 
+  // Context Synchronization
+  useEffect(() => {
+    classroomContext.updateState({
+      sessionId: sessionCode,
+      subject: sessionSubject,
+      topic: topics[activeTopicIdx] || "",
+    })
+  }, [sessionCode, sessionSubject, topics, activeTopicIdx])
+
   const addToast = useCallback((text: string) => {
-    const id = Date.now().toString()
+    const id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
     setToasts((prev) => [...prev, { id, text }])
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000)
   }, [])
 
-  /* ─── GROQ API ─── */
-  const teachContent = useCallback(async (content: string, isPdf: boolean): Promise<string> => {
-    const systemPrompt = isPdf
-      ? `You are Professor AI. The overall course topic is "${sessionTitle}". Read this slide/page content and explain it to students in simple engaging language. Max 4 sentences. Use examples.`
-      : `You are Professor AI, an engaging teacher. The overall course topic is "${sessionTitle}". Explain this topic in 4-5 sentences. Be clear, use examples, speak naturally as if lecturing a class.`
-    const userPrompt = isPdf ? content : "Teach this topic: " + content
-    
-    try {
-      const response = await fetch("/api/groq", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system: systemPrompt, prompt: userPrompt }),
-      })
-      if (!response.ok) throw new Error(`API ${response.status}`)
-      const data = await response.json()
-      
-      if (!data.text) throw new Error("No text in response")
-      return data.text
-    } catch (err) {
-      console.error("Groq API Error:", err)
-      return "AI unavailable - check API key"
-    }
-  }, [])
 
-  /* ─── PEXELS IMAGE ─── */
-  const loadContextImage = useCallback(async (content: string, isPdf: boolean) => {
-    let keywords = ""
-    if (isPdf) {
-      keywords = content.split(/\s+/).slice(0, 5).join(" ")
-    } else {
-      keywords = content
-        .toLowerCase()
-        .replace(/introduction to|concept of|the /gi, "")
-        .trim()
-    }
-
-    console.log('Fetching image for:', keywords)
-
-    setImageFading(true)
-    setImageLoaded(false)
-
-    try {
-      const res = await fetch(`/api/pexels?query=${encodeURIComponent(keywords)}`)
-      const data = await res.json()
-      console.log('Pexels response:', data.imageUrl)
-      
-      const url = data.imageUrl
-      if (url) {
-        // Preload
-        const img = new window.Image()
-        img.onload = () => {
-          setTimeout(() => {
-            setTopicImageUrl(url)
-            setImageLoaded(true)
-            setImageFading(false)
-          }, 250)
-        }
-        img.onerror = () => {
-          setTopicImageUrl(null)
-          setImageLoaded(false)
-          setImageFading(false)
-        }
-        img.src = url
-      } else {
-        setTopicImageUrl(null)
-        setImageLoaded(false)
-        setImageFading(false)
-      }
-    } catch (err) {
-      console.error('Pexels failed:', err)
-      setTopicImageUrl(null)
-      setImageLoaded(false)
-      setImageFading(false)
-    }
-  }, [])
 
   /* ─── WEB SPEECH ─── */
-  const speakText = useCallback((text: string, onEnd?: () => void) => {
+  const stopSpeaking = useCallback(() => {
+    window.speechSynthesis.cancel()
+    setAiSpeechState("idle")
+  }, [])
+
+  const shouldFlushSpeechBuffer = (buffer: string) => {
+    const trimmed = buffer.trim();
+    if (!trimmed) return false;
+    
+    // 1. Hard punctuation
+    if (/[.!?](\s|$)/.test(buffer) || buffer.includes("\n")) return true;
+    
+    const words = trimmed.split(/\s+/);
+    const wordCount = words.length;
+    
+    // 2. Soft punctuation if word count is getting high
+    if (wordCount >= 10 && /[,;:](\s|$)/.test(buffer)) return true;
+    
+    // 3. Fallback: No punctuation, but we hit 18+ words. Wait for a space so we don't cut a word.
+    if (wordCount >= 18 && buffer.endsWith(" ")) return true;
+    
+    return false;
+  }
+
+
+  const speakTextChunk = useCallback((text: string, onEnd?: () => void) => {
+    const lines = text.split('\n')
+    const filteredText = lines.filter(line => !line.startsWith('IMAGE_PROMPT:')).join('\n').trim()
+    if (!filteredText) {
+      if (onEnd) onEnd()
+      return
+    }
+
     if (!speechEnabled) {
       setAiSpeechState("speaking")
-      setLiveSubtitles(text)
-      const duration = Math.max(3000, text.split(/\s+/).length * 250)
+      setLiveSubtitles(filteredText)
+      const duration = Math.max(1000, filteredText.split(/\s+/).length * 250)
       setTimeout(() => { setAiSpeechState("idle"); if (onEnd) onEnd() }, duration)
       return
     }
     try {
-      window.speechSynthesis.cancel()
-      const u = new SpeechSynthesisUtterance(text)
+      const u = new SpeechSynthesisUtterance(filteredText)
       u.volume = 0.55; u.rate = 0.85; u.pitch = 1.0
-      u.onstart = () => { setAiSpeechState("speaking"); setLiveSubtitles(text) }
+      u.onstart = () => { setAiSpeechState("speaking"); setLiveSubtitles(filteredText) }
       u.onend = () => { setAiSpeechState("idle"); if (onEnd) onEnd() }
       u.onerror = () => setAiSpeechState("idle")
       speechRef.current = u
@@ -460,41 +501,289 @@ export default function LiveClassroomPage() {
     } catch { setAiSpeechState("idle") }
   }, [speechEnabled])
 
+  /* ─── PREFETCH LECTURE ─── */
+  useEffect(() => {
+    if (!loading && !isParsingPdf && topics.length > 0 && sessionSubject !== "" && teachingMode === "AI") {
+      const currentTopic = topics[activeTopicIdx] || "";
+      const currentItem = isPdfMode && pdfPages.length > 0 ? pdfPages[activeTopicIdx] : currentTopic;
+      
+      const currentContext = classroomContext.getState();
+      if (currentContext.subject !== sessionSubject || currentContext.topic !== currentTopic) {
+         classroomContext.updateState({
+           sessionId: sessionCode,
+           subject: sessionSubject,
+           topic: currentTopic,
+         });
+      }
+
+      const cacheKey = `${sessionCode}_${sessionSubject}_${currentTopic}`;
+      if (!prefetchedLectures.current[cacheKey]) {
+        console.log(`[Latency] Pre-fetching lecture stream at ${performance.now().toFixed(0)}ms for ${cacheKey}`);
+        
+        const prompt = isPdfMode 
+          ? `Please explain this page of the document: ${currentItem}` 
+          : `Please give a detailed lecture explanation for the current topic to the class: ${currentItem}`;
+          
+        const requestTime = performance.now();
+        const { conversationHistory: _ih, ...initialState } = classroomContext.getState();
+        const promise = fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: prompt,
+            target: "teacher",
+            state: initialState
+          })
+        }).then(res => {
+          if (!res.ok) throw new Error("Fetch failed");
+          return res;
+        }).catch(err => {
+          console.error("Prefetch failed", err);
+          throw err;
+        });
+        
+        prefetchedLectures.current[cacheKey] = { promise, time: requestTime, consumed: false };
+      }
+    }
+  }, [loading, isParsingPdf, topics, pdfPages, isPdfMode, teachingMode, sessionSubject, sessionCode, activeTopicIdx]);
+
   /* ─── AI TEACHING SEQUENCE ─── */
-  const runTopicSpeech = useCallback(async (idx: number) => {
+  const runTopicSpeech = useCallback(async (idx: number, resumeFrom?: string) => {
+    stopSpeaking()
+    
+    // Create a new AbortController for this lecture stream
+    lectureAbortRef.current?.abort()
+    const abortController = new AbortController()
+    lectureAbortRef.current = abortController
+    
+    setLecturePlayState("PLAYING")
+    
     const items = isPdfMode ? pdfPages : topics
     if (idx >= items.length) {
-      speakText("That concludes our topics for today. Feel free to review the materials and ask any remaining questions.")
+      speakTextChunk("That concludes our topics for today. Feel free to review the materials and ask any remaining questions.")
       return
     }
     const currentItem = items[idx]
-    loadContextImage(currentItem, isPdfMode)
+    
+    // Only clear visual states if NOT resuming
+    if (!resumeFrom) {
+      setInlineImageUrl(null)
+      setIsGeneratingImage(false)
+      setImageError(null)
+      setTopicImageUrl(null)
+      setImageLoaded(false)
+      setImageFading(false)
+      setTranscript("")
+    }
+
     setAiSpeechState("speaking")
     
-    const explanation = await teachContent(currentItem, isPdfMode)
-    transcriptRef.current.push(explanation)
-    setTranscript((prev) => {
-      if (prev) setPastTranscripts((old) => [...old, prev])
-      return explanation
-    })
-    speakText(explanation, () => {
+    let explanation = resumeFrom || ""
+    let sentenceBuffer = ""
+    let firstTokenTime = 0
+    let lastTokenTime = 0
+
+    const reqStartTime = performance.now()
+    let cachedTime = reqStartTime;
+
+    const onPlaybackEnd = () => {
       const next = idx + 1
       if (next < items.length) {
         addToast(isPdfMode ? `Moving to Page ${next + 1}` : `Moving to Topic ${next + 1}`)
         setActiveTopicIdx(next)
         syncClassroomProgress(sessionCode, next)
-        setTimeout(() => runTopicSpeech(next), 2000)
+        runTopicSpeech(next)
       } else {
-        speakText("That concludes our topics for today. Feel free to review the materials and ask any remaining questions.")
+        speakTextChunk("That concludes our topics for today. Feel free to review the materials and ask any remaining questions.")
       }
-    })
-  }, [topics, pdfPages, isPdfMode, speakText, addToast, teachContent, loadContextImage])
+    }
+
+      let retries = 0;
+      const MAX_RETRIES = 2;
+      let streamCompleted = false;
+
+      while (retries <= MAX_RETRIES && !streamCompleted) {
+        try {
+          const currentContext = classroomContext.getState();
+          const currentTopic = topics[idx] || "";
+          if (currentContext.subject !== sessionSubject || currentContext.topic !== currentTopic) {
+             classroomContext.updateState({
+               sessionId: sessionCode,
+               subject: sessionSubject,
+               topic: currentTopic,
+             });
+          }
+
+          const cacheKey = `${sessionCode}_${sessionSubject}_${currentTopic}`;
+          const cached = prefetchedLectures.current[cacheKey];
+
+          let res: Response | undefined;
+
+          if (cached && cached.fullText && retries === 0) {
+            console.log(`[Latency] Using fully cached text for ${cacheKey}`);
+            explanation = cached.fullText;
+            setTranscript(explanation);
+            speakTextChunk(explanation, onPlaybackEnd);
+            streamCompleted = true;
+            break;
+          } else if (cached && !cached.consumed && retries === 0) {
+            console.log(`[Latency] Using pre-fetched promise for stream ${cacheKey}`);
+            cachedTime = cached.time;
+            cached.consumed = true; // Mark as consumed so it isn't read twice
+            res = await cached.promise;
+          } else {
+            let prompt = isPdfMode 
+              ? `Please explain this page of the document: ${currentItem}` 
+              : `Please give a detailed lecture explanation for the current topic to the class: ${currentItem}`;
+
+            if (explanation.length > 50) {
+               prompt = `${prompt}. Continue exactly from where you left off. Do not repeat what you already said. The last text generated was: "${explanation.slice(-100)}"`;
+            }
+
+            const { conversationHistory: _lh, ...lectureState } = classroomContext.getState();
+            res = await fetch("/api/ai", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: abortController.signal,
+              body: JSON.stringify({
+                question: prompt,
+                target: "teacher",
+                state: lectureState
+              })
+            })
+          }
+
+          if (res && res.ok && res.body) {
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            
+            while (true) {
+              if (abortController.signal.aborted) break;
+              const { done, value } = await reader.read();
+              if (done) break;
+              
+              const chunk = decoder.decode(value, { stream: true });
+              const lines = chunk.split("\n");
+              
+              for (const line of lines) {
+                 if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+                    try {
+                       const data = JSON.parse(line.slice(6));
+                       const delta = data.choices?.[0]?.delta?.content || "";
+                       if (delta) {
+                          if (firstTokenTime === 0) firstTokenTime = performance.now();
+                          explanation += delta;
+                          sentenceBuffer += delta;
+                          
+                          // Update UI immediately
+                          setTranscript(explanation);
+                          
+                          // Check for sentence boundaries to queue speech
+                          if (shouldFlushSpeechBuffer(sentenceBuffer)) {
+                             speakTextChunk(sentenceBuffer.trim());
+                             sentenceBuffer = "";
+                          }
+                       }
+                    } catch (e) {}
+                 }
+              }
+            }
+            
+            lastTokenTime = performance.now();
+            streamCompleted = true;
+
+            // BACKGROUND PREFETCH NEXT TOPIC
+            const nextIdx = idx + 1;
+            if (nextIdx < items.length) {
+              const nextItem = items[nextIdx];
+              const nextCacheKey = `${sessionCode}_${sessionSubject}_${nextItem}`;
+              if (!prefetchedLectures.current[nextCacheKey]) {
+                console.log(`[Latency] Pre-fetching NEXT topic stream at ${performance.now().toFixed(0)}ms for ${nextCacheKey}`);
+                const nextPrompt = isPdfMode 
+                  ? `Please explain this page of the document: ${nextItem}` 
+                  : `Please give a detailed lecture explanation for the current topic to the class: ${nextItem}`;
+                
+                const { conversationHistory: _ph, ...prefetchState } = classroomContext.getState();
+                const nextPromise = fetch("/api/ai", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    question: nextPrompt,
+                    target: "teacher",
+                    state: { ...prefetchState, topic: nextItem }
+                  })
+                }).then(r => {
+                  if (!r.ok) throw new Error("Prefetch failed");
+                  return r;
+                }).catch(err => {
+                  console.error("Prefetch next topic failed", err);
+                  throw err;
+                });
+                
+                prefetchedLectures.current[nextCacheKey] = { promise: nextPromise, time: performance.now(), consumed: false };
+              }
+            }
+
+            // Flush any remaining speech with the completion callback attached to the last utterance
+            if (sentenceBuffer.trim().length > 0) {
+               speakTextChunk(sentenceBuffer.trim(), onPlaybackEnd);
+            } else {
+               // If we already flushed everything perfectly on boundaries, we need to trigger next topic
+               onPlaybackEnd();
+            }
+
+            // Cache the fully resolved string for immediate playback if user returns to this topic
+            if (cached) {
+               cached.fullText = explanation;
+            }
+
+          } else {
+            throw new Error("Bad response from AI Server")
+          }
+        } catch (e: any) {
+          // Intentional abort from doubt pause — exit silently
+          if (e?.name === "AbortError" || abortController.signal.aborted) {
+            console.log("[Lecture] Stream aborted for doubt pause");
+            // Save the current state for resumption
+            savedLectureStateRef.current = {
+              topicIdx: idx,
+              fullTranscript: explanation,
+              sentenceBuffer: sentenceBuffer,
+            };
+            return; // Exit cleanly, no retry
+          }
+          console.error("AI Lecture fetch failed or interrupted:", e)
+          retries++;
+          if (retries > MAX_RETRIES) {
+             explanation = "Network error. Please try again."
+             setTranscript(explanation)
+             speakTextChunk(explanation)
+             break;
+          }
+          // wait before retry
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+
+    const totalTimeToFirstToken = firstTokenTime > 0 ? (firstTokenTime - cachedTime) : (lastTokenTime - cachedTime);
+    const totalStreamingTime = lastTokenTime - firstTokenTime;
+    
+    console.log(`[Latency] Time to First Token: ${totalTimeToFirstToken.toFixed(0)}ms | Streaming Duration: ${totalStreamingTime.toFixed(0)}ms`);
+    if (idx === 0) {
+       addToast(`Latency | TTFT: ${totalTimeToFirstToken.toFixed(0)}ms | Streaming: ${totalStreamingTime.toFixed(0)}ms`);
+    }
+
+    transcriptRef.current.push(explanation)
+    setPastTranscripts((old) => [...old, explanation])
+
+  }, [topics, pdfPages, isPdfMode, speakTextChunk, stopSpeaking, addToast, sessionCode, sessionSubject])
 
   /* ─── ENTER CLASSROOM ─── */
   const handleEnterClassroom = useCallback(() => {
     try { window.speechSynthesis.cancel() } catch { /* ok */ }
     setHasEntered(true)
-    if (teachingMode === "AI") setTimeout(() => runTopicSpeech(0), 800)
+    setLectureHistory([])
+    if (teachingMode === "AI") runTopicSpeech(0)
   }, [teachingMode, runTopicSpeech])
 
   /* ─── CLEANUP: kill speech on unmount (navigation away) ─── */
@@ -509,6 +798,7 @@ export default function LiveClassroomPage() {
     
     return () => {
       try { window.speechSynthesis.cancel() } catch { /* ok */ }
+      lectureAbortRef.current?.abort()
       window.removeEventListener("beforeunload", handleBeforeUnload);
       
       if (!isTeacher && studentId && sessionCode) {
@@ -519,10 +809,10 @@ export default function LiveClassroomPage() {
 
   /* ─── TIMER ─── */
   useEffect(() => {
-    if (!hasEntered) return
+    if (!hasEntered || lecturePlayState === "PAUSED_FOR_DOUBT") return
     const i = setInterval(() => setElapsedSeconds((s) => s + 1), 1000)
     return () => clearInterval(i)
-  }, [hasEntered])
+  }, [hasEntered, lecturePlayState])
 
   /* ─── CLASSROOM SYNC ─── */
   useEffect(() => {
@@ -696,49 +986,122 @@ export default function LiveClassroomPage() {
     isAnsweringRef.current = true
     setIsAnswering(true)
     
+    // Stop any active narration immediately (lecture or previous doubt voice)
+    try { window.speechSynthesis.cancel() } catch { /* ok */ }
+    setAiSpeechState("idle")
+    resumePendingRef.current = false // Reset resume pending since we got a new question
+    
     const question = chatInput.trim()
-    const userMsg = { id: Date.now().toString(), sender: "You", text: question, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: false }
-    setMessages((prev) => [...prev, userMsg])
+    const userMsgId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+    const userMsg = { id: userMsgId, sender: "You", text: question, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: false, role: "user" as const }
+    classroomContext.addMessage(userMsg)
     setChatInput("")
     
-    try { window.speechSynthesis.pause(); setAiSpeechState("paused"); addToast("AI paused to answer doubt") } catch { /* ok */ }
-    
-    let answer: string
-    try {
-      const system = `You are a classroom AI teacher.\nThe student asked you: "${question}"\nAnswer that exact question in 2 sentences max.\nDo not answer a different question.\nDo not say "Great question" or any filler.\nDo not talk about Carnot or unrelated topics\nunless the student specifically asked about it.\nJust answer what was asked.`
-      
-      console.log('Question:', question)
-      console.log('Transcript context:', 'REMOVED FOR DEBUGGING')
-      console.log('Full prompt being sent:', { system, prompt: question })
-
-      const res = await fetch("/api/groq", { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ system, prompt: question }) 
-      })
-      if (res.ok) { 
-        const d = await res.json()
-        answer = d.text || DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)] 
-      } else { 
-        answer = DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)] 
-      }
-
-      setMessages((prev) => [...prev, { id: (Date.now() + 1).toString(), sender: "Professor AI", text: answer, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: true }])
-      speakText(answer, () => {
-        speakText("Let's continue...", () => runTopicSpeech(activeTopicIdx))
-      })
-
-    } catch {
-      answer = DOUBT_RESPONSES[Math.floor(Math.random() * DOUBT_RESPONSES.length)]
-      setMessages((prev) => [...prev, { id: (Date.now() + 1).toString(), sender: "Professor AI", text: answer, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: true }])
-      speakText(answer, () => {
-        speakText("Let's continue...", () => runTopicSpeech(activeTopicIdx))
-      })
-    } finally {
-      isAnsweringRef.current = false
-      setIsAnswering(false)
+    // === PAUSE LECTURE ===
+    if (lecturePlayState === "PLAYING") {
+      // Abort active lecture stream
+      lectureAbortRef.current?.abort()
+      setLecturePlayState("PAUSED_FOR_DOUBT")
     }
+    
+    try {
+      const currentContext = classroomContext.getState();
+
+      const { conversationHistory: _dh, ...doubtState } = currentContext;
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          question: question,
+          target: "doubt-chat",
+          sessionId: sessionCode,
+          studentId: studentId,
+          state: doubtState
+        })
+      })
+
+      if (res.ok && res.body) {
+        const msgId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+        classroomContext.addMessage({ id: msgId, sender: "Professor AI", text: "", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: true, role: "assistant" as const })
+        
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let answerText = ""
+        
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          
+          const chunk = decoder.decode(value, { stream: true })
+          const lines = chunk.split("\n")
+          
+          for (const line of lines) {
+             if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+                try {
+                   const data = JSON.parse(line.slice(6))
+                   const delta = data.choices?.[0]?.delta?.content || ""
+                   if (delta) {
+                      answerText += delta
+                      classroomContext.updateMessage(msgId, { text: answerText })
+                   }
+                } catch (e) {}
+             }
+          }
+        }
+
+        // Play the generated audio automatically
+        speakTextChunk(answerText, () => {
+          // Resume class automatically when doubt explanation ends
+          resumePendingRef.current = false;
+          const saved = savedLectureStateRef.current;
+          if (saved) {
+            savedLectureStateRef.current = null;
+            setLecturePlayState("RESUMING");
+            runTopicSpeech(saved.topicIdx, saved.fullTranscript);
+          } else {
+            setLecturePlayState("PLAYING");
+            runTopicSpeech(activeTopicIdx);
+          }
+        });
+
+      } else {
+        const errData = await res.text()
+        console.error("Doubt Chat API Error:", errData)
+        addToast("Sorry, I encountered an error answering that.")
+      }
+    } catch (e) {
+      console.error("Doubt Chat fetch failed:", e)
+      addToast("Network error. Please try again.")
+    }
+
+    isAnsweringRef.current = false
+    setIsAnswering(false)
+    // NOTE: Lecture remains PAUSED. Student must click "Resume Lecture".
   }
+
+  /* ─── RESUME LECTURE ─── */
+  const handleResumeLecture = useCallback(() => {
+    // If the professor is still speaking the doubt response, wait until it finishes
+    if (window.speechSynthesis.speaking) {
+      resumePendingRef.current = true;
+      setLecturePlayState("RESUMING");
+      return;
+    }
+    
+    const saved = savedLectureStateRef.current;
+    if (!saved) {
+      // No saved state — just restart current topic
+      setLecturePlayState("PLAYING")
+      runTopicSpeech(activeTopicIdx)
+      return
+    }
+    
+    setLecturePlayState("RESUMING")
+    savedLectureStateRef.current = null;
+    
+    // Resume from exact position with continuation prompt
+    runTopicSpeech(saved.topicIdx, saved.fullTranscript)
+  }, [activeTopicIdx, runTopicSpeech])
 
   const handleConfirmEnd = async () => {
     setShowEndModal(false)
@@ -1284,17 +1647,25 @@ export default function LiveClassroomPage() {
           {/* AI TILE */}
           <div
             className={`rounded-2xl border-2 p-5 flex gap-5 flex-shrink-0 transition-all duration-500 relative ${
-              aiSpeechState === "speaking" ? "bg-[#131316] tile-glow"
+              lecturePlayState === "PAUSED_FOR_DOUBT" ? "bg-[#131316] border-amber-500/30"
+              : aiSpeechState === "speaking" ? "bg-[#131316] tile-glow"
               : aiSpeechState === "paused" ? "bg-[#131316] border-amber-500/20"
               : "bg-[#111111] border-white/[.06]"
             }`}
             style={{ minHeight: 180 }}
           >
-            {/* LIVE badge */}
-            <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-red-950/40 border border-red-500/20 px-2.5 py-1 rounded-full z-10">
-              <span className="h-[6px] w-[6px] rounded-full bg-red-500 animate-pulse" />
-              <span className="text-[8px] font-black text-red-400 uppercase tracking-[.15em]">Live</span>
-            </div>
+            {/* LIVE / PAUSED badge */}
+            {lecturePlayState === "PAUSED_FOR_DOUBT" ? (
+              <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-amber-950/40 border border-amber-500/30 px-2.5 py-1 rounded-full z-10">
+                <span className="h-[6px] w-[6px] rounded-full bg-amber-400" />
+                <span className="text-[8px] font-black text-amber-400 uppercase tracking-[.12em]">Paused · Answering Doubt</span>
+              </div>
+            ) : (
+              <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-red-950/40 border border-red-500/20 px-2.5 py-1 rounded-full z-10">
+                <span className="h-[6px] w-[6px] rounded-full bg-red-500 animate-pulse" />
+                <span className="text-[8px] font-black text-red-400 uppercase tracking-[.15em]">Live</span>
+              </div>
+            )}
 
             {/* LEFT — orb + waveform */}
             <div className="flex flex-col items-center gap-3 flex-shrink-0 justify-center">
@@ -1313,7 +1684,7 @@ export default function LiveClassroomPage() {
                 }`} />
               </div>
               <div className="flex items-end justify-center gap-[3px] h-5 w-12">
-                {aiSpeechState === "speaking"
+                {aiSpeechState === "speaking" && lecturePlayState !== "PAUSED_FOR_DOUBT"
                   ? [1,2,3,4,5].map((i) => <div key={i} className={`w-[3px] rounded-full bg-purple-400 wv wv-${i}`} style={{height:"100%"}} />)
                   : [1,2,3,4,5].map((i) => <div key={i} className="w-[3px] h-[3px] rounded-full bg-white/8" />)
                 }
@@ -1324,9 +1695,11 @@ export default function LiveClassroomPage() {
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden gap-1">
               <h3 className="text-lg font-black text-white leading-tight">Professor AI</h3>
               <span className={`text-xs font-bold transition-colors duration-300 ${
-                aiSpeechState === "speaking" ? "text-purple-400" : aiSpeechState === "paused" ? "text-amber-400" : "text-white/20"
+                lecturePlayState === "PAUSED_FOR_DOUBT" ? "text-amber-400"
+                : aiSpeechState === "speaking" ? "text-purple-400" : aiSpeechState === "paused" ? "text-amber-400" : "text-white/20"
               }`}>
-                {aiSpeechState === "speaking" ? activeLabel : aiSpeechState === "paused" ? "Paused" : "Waiting to begin..."}
+                {lecturePlayState === "PAUSED_FOR_DOUBT" ? "Paused — Answering your doubt" 
+                : aiSpeechState === "speaking" ? activeLabel : aiSpeechState === "paused" ? "Paused" : "Waiting to begin..."}
               </span>
 
               {/* Transcript — max ~3 lines visible, scroll, gradient fade at bottom */}
@@ -1335,10 +1708,9 @@ export default function LiveClassroomPage() {
                   {pastTranscripts.map((pt, i) => (
                     <p key={i} style={{ fontSize: 15, lineHeight: 1.6 }} className="text-white/20 mb-1.5">{pt}</p>
                   ))}
-                  {transcript && (
-                    <p style={{ fontSize: 15, lineHeight: 1.6 }} className={`font-medium transition-colors duration-300 ${
-                      aiSpeechState === "speaking" ? "text-purple-300" : "text-white/35"
-                    }`}>{transcript}</p>
+                  {transcript && renderTranscriptText(transcript, inlineImageUrl, isGeneratingImage, imageError, aiSpeechState)}
+                  {lecturePlayState === "PAUSED_FOR_DOUBT" && (
+                    <p style={{ fontSize: 13, lineHeight: 1.6 }} className="text-amber-400/70 italic mt-2">Lecture paused while answering your question. Press Resume Lecture when you’re ready to continue.</p>
                   )}
                   {!transcript && !pastTranscripts.length && (
                     <p style={{ fontSize: 15, lineHeight: 1.6 }} className="text-white/12 italic">Transcript appears when the lecture starts...</p>
@@ -1412,17 +1784,29 @@ export default function LiveClassroomPage() {
               <div ref={chatEndRef} />
             </div>
             {/* Input — always visible at bottom */}
-            <form onSubmit={handleSendDoubt} className="flex gap-2 pt-2.5 border-t border-white/[.06] mt-2 flex-shrink-0">
-              <input
-                id="doubt-chat-input" type="text" required value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)} placeholder={isAnswering ? "Professor is answering..." : "Ask a doubt..."}
-                disabled={isAnswering}
-                className="flex-1 px-3 py-2 bg-[#1A1A1A] border border-white/8 rounded-xl text-xs focus:outline-none focus:border-purple-500/40 text-white placeholder:text-white/15 disabled:opacity-50"
-              />
-              <button type="submit" disabled={isAnswering} className="px-3 py-2 bg-purple-600 hover:bg-purple-500 rounded-xl text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-                <Send className="h-3.5 w-3.5" />
-              </button>
-            </form>
+            <div className="flex flex-col gap-2 pt-2.5 border-t border-white/[.06] mt-2 flex-shrink-0">
+              {lecturePlayState === "PAUSED_FOR_DOUBT" && (
+                <button
+                  type="button"
+                  onClick={handleResumeLecture}
+                  className="w-full flex items-center justify-center gap-2 py-2 bg-amber-600 hover:bg-amber-500 rounded-xl text-white text-xs font-bold transition-all shadow-lg shadow-amber-900/30"
+                >
+                  <Play className="h-3.5 w-3.5 fill-white" />
+                  Resume Lecture
+                </button>
+              )}
+              <form onSubmit={handleSendDoubt} className="flex gap-2 w-full">
+                <input
+                  id="doubt-chat-input" type="text" required value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)} placeholder={isAnswering ? "Professor is answering..." : "Ask a doubt..."}
+                  disabled={isAnswering}
+                  className="flex-1 px-3 py-2 bg-[#1A1A1A] border border-white/8 rounded-xl text-xs focus:outline-none focus:border-purple-500/40 text-white placeholder:text-white/15 disabled:opacity-50"
+                />
+                <button type="submit" disabled={isAnswering} className="px-3 py-2 bg-purple-600 hover:bg-purple-500 rounded-xl text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                  <Send className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            </div>
           </div>
         </aside>
       </div>

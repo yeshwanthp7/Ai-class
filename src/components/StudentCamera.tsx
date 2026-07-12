@@ -192,29 +192,69 @@ export default function StudentCamera({
     return clearOutOfFrameTimers;
   }, [metrics.faceDetected, enabled, active, sessionCode]);
 
+  // Phone warning state and timer management
+  const phoneTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // ── Phone usage auto-kick engine ──
   useEffect(() => {
     if (!enabled || !active) return;
-    
+
     if (metrics.phoneDetected) {
-      setPhoneWarningCount(prev => {
-        const next = prev + 1;
-        if (next >= 3) {
-          const kickAsync = async () => {
-            const storedName = typeof window !== "undefined" ? localStorage.getItem("studentName") || "Unknown" : "Unknown";
-            await kickStudent(sessionCode, studentId, storedName);
-            window.location.href = `/session/${sessionCode}/summary?kicked=true&reason=device_usage`;
-          };
-          kickAsync();
-        }
-        return next;
-      });
-      setShowPhoneWarning(true);
+      // Trigger warning increment immediately if the modal is not shown yet
+      if (!showPhoneWarning) {
+        setShowPhoneWarning(true);
+        setPhoneWarningCount(prev => {
+          const next = prev + 1;
+          if (next >= 3) {
+            const kickAsync = async () => {
+              const storedName = typeof window !== "undefined" ? localStorage.getItem("studentName") || "Unknown" : "Unknown";
+              await kickStudent(sessionCode, studentId, storedName);
+              window.location.href = `/session/${sessionCode}/summary?kicked=true&reason=device_usage`;
+            };
+            kickAsync();
+          }
+          return next;
+        });
+      }
+
+      // Start/continue a timer to escalate warnings every 4 seconds of sustained detection
+      if (!phoneTimerRef.current) {
+        const checkInterval = () => {
+          phoneTimerRef.current = setTimeout(() => {
+            setPhoneWarningCount(prev => {
+              const next = prev + 1;
+              if (next >= 3) {
+                const kickAsync = async () => {
+                  const storedName = typeof window !== "undefined" ? localStorage.getItem("studentName") || "Unknown" : "Unknown";
+                  await kickStudent(sessionCode, studentId, storedName);
+                  window.location.href = `/session/${sessionCode}/summary?kicked=true&reason=device_usage`;
+                };
+                kickAsync();
+              }
+              return next;
+            });
+            checkInterval();
+          }, 4000);
+        };
+        checkInterval();
+      }
     } else {
-      setPhoneWarningCount(0);
+      // Phone is not detected: hide warning and stop timer, but PERSIST warning count to prevent bypass
       setShowPhoneWarning(false);
+      if (phoneTimerRef.current) {
+        clearTimeout(phoneTimerRef.current);
+        phoneTimerRef.current = null;
+      }
     }
-  }, [metrics.phoneDetected, enabled, active, sessionCode, studentId]);
+
+    return () => {
+      if (phoneTimerRef.current) {
+        clearTimeout(phoneTimerRef.current);
+        phoneTimerRef.current = null;
+      }
+    };
+  }, [metrics.phoneDetected, enabled, active, showPhoneWarning, sessionCode, studentId]);
+
 
   // ── Camera denied fallback ──
   if (denied) {

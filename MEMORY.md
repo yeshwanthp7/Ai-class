@@ -6,6 +6,7 @@ Class AI is an AI-powered classroom monitoring application that uses artificial 
 ## Tech Stack & Versions
 - **Framework:** Next.js 16.2.9 (App Router)
 - **Language:** TypeScript 5.x
+- **AI Models:** NVIDIA NIM (Llama-3.3 70B)
 - **Styling:** Tailwind CSS 4.x + shadcn/ui
 - **Icons:** lucide-react
 - **Animation:** Three.js (CDN-loaded, shader-based)
@@ -113,7 +114,7 @@ src/
     - [x] Extended FocusMetrics interface with `gazeYaw`, `gazePitch`, `irisEngagement`, `effectiveDeviation`
     - [x] Updated StudentCamera HUD to show gaze angle degrees, iris engagement indicator (ScanEye icon), and effective deviation
     - [x] Updated live/page.tsx initial FocusMetrics state for new fields
-    - [x] Modularized Ponytail prompt integrations (`src/lib/ponytail/`) with dynamic `loader`, markdown `parser`, and system prompt `manager` prepending logic inside the Groq API route (`/api/groq`). Integrated support for executing specific Ponytail sub-skills (e.g., `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`) via slash commands in user prompts.
+    - [x] Modularized Ponytail prompt integrations (`src/lib/ponytail/`) with dynamic `loader`, markdown `parser`, and system prompt `manager` prepending logic inside the NVIDIA API route (`/api/nvidia`). Integrated support for executing specific Ponytail sub-skills (e.g., `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`) via slash commands in user prompts.
     - [x] Implemented Strict Admission Control & Kick/Rejoin Rules:
       - [x] Configured Firestore security rules to allow read/write to new `/sessions/{sessionId}/kicked` subcollection.
       - [x] Updated `joinSession` database services to enforce session status checks (blocking late-joins when `Active` or `Completed`) and name-based kick blacklisting.
@@ -139,5 +140,44 @@ src/
   - [x] Configured real-time classification to scan for forbidden devices (`cell phone`, `tablet`, `laptop`) once every 1200ms.
   - [x] Implemented a 3-strikes warnings modal: warning dialog pops up on screen on detection, and automatically kicks/ejects the student if detected 3 times consecutively, redirecting to a custom `device_usage` exit screen.
   - [x] Pushed all updates to main GitHub repository branch and triggered live Vercel deployments.
-
+- [x] Integrated AI Study Buddy feature (/study-buddy) supporting collaborative study paths.
+- [x] Integrated NVIDIA NIM API endpoint for the Classroom AI teacher:
+  - [x] Added `NVIDIA_API_KEY` configuration support.
+  - [x] Created `/api/nvidia` route to strictly require `NVIDIA_API_KEY` and call the NVIDIA completions endpoint (`https://integrate.api.nvidia.com/v1/chat/completions`) using the `meta/llama-3.3-70b-instruct` model.
+  - [x] Added support for structured lecture modes (`mode === 'lecture'`), incorporating a guided `LECTURE_SYSTEM_PROMPT` (curiosity questions, analogies, image prompts, quizzes) and returning `updatedHistory` for context continuity.
+  - [x] Implemented a new `/api/image` endpoint that calls NVIDIA's FLUX.2-klein-4b NIM model (`https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b`) for dynamic image generation using the provided `imagePrompt`.
+- [x] Environment & Firebase Setup Fix:
+  - [x] Discovered client-side environment variables were using Vite prefixes (`VITE_`) instead of Next.js prefixes (`NEXT_PUBLIC_`), causing Firebase, Gemini, Unsplash, and YouTube integrations to fail on client-side.
+  - [x] Created [`.env.local`](file:///c:/Users/mdism/Downloads/future%20learnin meet/.env.local) and [`.env.local.example`](file:///c:/Users/mdism/Downloads/future%20learnin%20meet/.env.local.example) with correct `NEXT_PUBLIC_` variables to expose credentials to the client side.
+  - [x] Corrected the Firebase credentials and LiveKit configuration by using the valid settings (`ai-class-38af7` project) retrieved from the backup workspace folder (`c:\Users\mdism\ai class monitoring\Ai-class-monitoring`), resolving the `"auth/api-key-not-valid"` error.
+- [x] API Refactoring:
+  - [x] Replaced and deleted the old `/api/groq` route.
+  - [x] Implemented `/api/nvidia` as the primary API route for AI classroom completions, integrating Ponytail prompts and the Llama 3.3 70B model.
+  - [x] Copied the missing `vendor/ponytail` files (including the `skills` files) from the backup project directory to resolve the `Ponytail skill 'ponytail' not found` API 500 error.
+  - [x] Completely removed Gemini API, Unsplash API, and YouTube API dependencies from [`.env`](file:///c:/Users/mdism/Downloads/future%20learnin%20meet/.env) and [`AIStudyBuddy.tsx`](file:///c:/Users/mdism/Downloads/future%20learnin%20meet/src/components/AIStudyBuddy.tsx).
+  - [x] Configured AI Study Buddy to use client-side text extraction and `/api/nvidia` for document summary and chat.
+  - [x] Removed YouTube suggestions option from the dashboard create-session page.
+- [x] NVIDIA NIM Speech gRPC Integration & Fallbacks:
+  - [x] Installed `@grpc/grpc-js` and `@grpc/proto-loader` dependencies.
+  - [x] Created `src/app/api/speech/riva_tts.proto` define the Riva proto schema.
+  - [x] Implemented `src/app/api/speech/route.ts` using secure gRPC to `grpc.nvcf.nvidia.com:443`, with a dynamic model routing fallback (tries Resemble AI Chatterbox model first, then falls back to Magpie/Nemotron TTS if unauthorized).
+- [x] Real-time AI Classroom Narration & Flux Visualization:
+  - [x] Updated `src/app/session/[code]/live/page.tsx` to maintain `lectureHistory` for context continuity.
+  - [x] Created `speakNvidiaText` to narrate explanations using the `/api/speech` API, falling back gracefully to the native browser SpeechSynthesis API if NVIDIA TTS times out or fails.
+  - [x] Implemented client-side parsing of `IMAGE_PROMPT:` in the reasoning response. Initiates a non-blocking request to `/api/image` to generate a Flux visualization.
+  - [x] Designed and integrated the `renderTranscriptText` utility to display inline progress loaders, base64-encoded generated images, and clear errors in the transcript panel.
+  - [x] Reset lecture history and cleaned up pending speech runs on room entry/exit transitions.
+  - [x] Refactored & Enhanced Modular AI Teacher (Production-Ready):
+      - [x] Created `src/lib/teacher/types.ts` defining type contracts (`Message`, `TeacherConfig`, `MemoryAdapter`).
+      - [x] Created `src/lib/teacher/config.ts` providing centralized configuration (`NVIDIA_MODEL`, temperature, tokens) and University Lecturer Persona prompts with adaptive complexity levels (`beginner`, `intermediate`, `advanced`).
+      - [x] Created `src/lib/teacher/memory.ts` implementing a bounded session-based conversation memory adapter.
+      - [x] Created `src/lib/teacher/index.ts` containing the core request execution.
+      - [x] Improved resilience: Implemented a request retry loop (max 2 attempts) that handles transient 500 errors and connection dropouts seamlessly.
+      - [x] Sanitized payload messages: Filtered histories to only include `role` and `content` to prevent NVIDIA gateway decoding failures on multi-turn conversations.
+      - [x] Fixed Next.js timeouts: Configured `export const maxDuration = 60;` in `src/app/api/teacher/route.ts` to allow up to 60 seconds of execution in dev server.
+      - [x] Refactored `src/lib/teacher.ts` as a backward-compatible proxy.
+      - [x] Verified full multi-turn teacher capability via PowerShell API tests.
+      - [x] Optimized response latency and resolved timeouts: Switched default model from `nvidia/llama-3.3-nemotron-super-49b-v1` to `meta/llama-3.1-8b-instruct` (lowered Time-To-First-Token from ~5.8s to ~260ms) and replaced hardcoded IP address `99.83.136.103` with dynamic resolution for `integrate.api.nvidia.com`.
+      - [x] Implemented automatic classroom resumption: Updated the speech end callback in `src/app/session/[code]/live/page.tsx` to automatically resume the main lecture stream once the doubt narration finishes, removing the requirement to click the manual "Resume Lecture" button.
+      - [x] Fixed Next.js build command: Configured `"build": "next build --webpack"` in `package.json` to disable Turbopack by default, enabling successful client-side fallback webpack resolution during production build.
 

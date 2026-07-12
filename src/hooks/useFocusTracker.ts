@@ -807,7 +807,7 @@ export function useFocusTracker({ videoRef, onFocusUpdate, enabled = true }: Use
                 const predictions = await model.detect(video);
                 const forbiddenObjects = ["cell phone", "laptop", "tablet"];
                 phoneDetected = predictions.some((p: any) => 
-                  forbiddenObjects.includes(p.class) && p.score > 0.55
+                  forbiddenObjects.includes(p.class) && p.score > 0.40
                 );
               }
             } catch (err) {

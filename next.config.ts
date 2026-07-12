@@ -23,6 +23,19 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        "@grpc/grpc-js": false,
+        "@grpc/proto-loader": false,
+        "dns": false,
+        "net": false,
+        "tls": false,
+      };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;

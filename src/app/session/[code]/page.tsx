@@ -46,6 +46,8 @@ import {
   subscribeToSession,
   subscribeToStudents,
   endSession,
+  kickStudent,
+  removeStudent,
   startClassEarly,
   updateSessionControls,
   Session,
@@ -54,6 +56,7 @@ import {
   checkIsKicked,
   isStudentRegistered,
 } from "@/lib/session-service"
+import { classroomContext } from "@/lib/classroom-context"
 import { subscribeToAuthChanges } from "@/lib/auth-service"
 import DashboardSidebar from "@/components/dashboard-sidebar"
 
@@ -64,29 +67,7 @@ const ROTATING_SUBTITLES = [
 ]
 
 // Claude API simulation helper for topic explanations
-const CLAUDE_EXPLANATIONS: Record<string, string> = {
-  "thermodynamics": "Thermodynamics is the branch of physics that deals with the relationships between heat and other forms of energy. In particular, it describes how thermal energy is converted to and from other forms of energy and how it affects matter. The fundamental laws governing these changes are crucial in mechanical engineering and physical chemistry.",
-  "carnot cycle": "The Carnot cycle is a theoretical thermodynamic cycle proposed by Nicolas Léonard Sadi Carnot in 1824. It provides an upper limit on the efficiency that any classical thermodynamic engine can achieve during the conversion of heat into work, operating between two reservoirs at different temperatures.",
-  "entropy": "Entropy is a scientific concept, as well as a measurable physical property, that is most commonly associated with a state of disorder, randomness, or uncertainty. According to the Second Law of Thermodynamics, the total entropy of an isolated system can never decrease over time; it can only remain constant or increase.",
-  "absolute zero": "Absolute zero is the lowest limit of the thermodynamic temperature scale, a state at which the enthalpy and entropy of a cooled ideal gas reach their minimum value, taken as zero kelvins. At this state, the fundamental particles of nature have minimal vibrational motion."
-}
 
-const getMockAIScriptForTopic = (topic: string) => {
-  const t = topic.toLowerCase()
-  for (const key of Object.keys(CLAUDE_EXPLANATIONS)) {
-    if (t.includes(key)) {
-      return CLAUDE_EXPLANATIONS[key]
-    }
-  }
-  return `Let's discuss our next topic: ${topic}. This concept outlines crucial relationships in thermodynamics, connecting heat flow, chemical potential, and molecular distributions. Please pay close attention to the diagram on screen.`
-}
-
-const CLAUDE_DOUBT_RESPONSES = [
-  "That is an excellent question! In thermodynamics, we define systems as open, closed, or isolated. In a closed system, energy can pass through the boundary but mass cannot.",
-  "Great question. Carnot efficiency is indeed the absolute limit because it assumes zero friction and perfectly reversible processes, which are impossible in real-world engineering.",
-  "Entropy can be thought of as the number of ways a system can arrange its microstates. The more disorganized a system is, the higher its entropy score.",
-  "Absolute zero is a theoretical limit. According to the Third Law, it is impossible to reach absolute zero in a finite number of steps because heat will always leak in."
-]
 
 export default function SessionPage() {
   const params = useParams()
@@ -133,15 +114,17 @@ export default function SessionPage() {
 
   // Doubt Chat messages
   const [chatInput, setChatInput] = useState("")
-  const [messages, setMessages] = useState<Array<{
-    id: string
-    sender: string
-    text: string
-    time: string
-    isAI: boolean
-  }>>([
-    { id: "1", sender: "Professor AI", text: "Welcome to today's physics session. Feel free to type any doubts here.", time: "12:00 PM", isAI: true },
-  ])
+  const [messages, setMessages] = useState(classroomContext.getState().conversationHistory)
+
+  useEffect(() => {
+    if (classroomContext.getState().conversationHistory.length === 0) {
+      classroomContext.addMessage({ id: "welcome", sender: "Professor AI", text: "Welcome! Feel free to ask any doubts here.", time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), isAI: true, role: "assistant" })
+    }
+    const unsubscribe = classroomContext.subscribe((state) => {
+      setMessages(state.conversationHistory)
+    })
+    return unsubscribe
+  }, [])
 
   // Toasts
   const [toasts, setToasts] = useState<Array<{ id: string; text: string; icon?: React.ReactNode }>>([])
@@ -229,12 +212,23 @@ export default function SessionPage() {
             setTeachingMode("AI")
             setError(null)
             setLoading(false)
+            classroomContext.updateState({
+              sessionId: fallbackSession.id,
+              subject: fallbackSession.subject,
+              topic: fallbackSession.topics[fallbackSession.currentTopicIndex] || "",
+            })
           } else {
             setSession(updatedSession)
             setTeachingMode(updatedSession.teachingMode === "AI" ? "AI" : "Human")
             setError(null)
             setLoading(false)
             console.log("Session data loaded")
+            // Sync context
+            classroomContext.updateState({
+              sessionId: updatedSession.id,
+              subject: updatedSession.subject,
+              topic: updatedSession.topics[updatedSession.currentTopicIndex] || "",
+            })
             // Sync toggles
             setFocusMode(!!updatedSession.focusMode)
             setAllowLateJoins(updatedSession.allowLateJoins !== false)
@@ -347,11 +341,9 @@ export default function SessionPage() {
       }
     } catch { /* localStorage blocked — live page will use defaults */ }
 
-    setTimeout(() => {
-      setIsTransitioning(false)
-      console.log("Transition complete — navigating to /live")
-      router.push(`/session/${sessionCode}/live`)
-    }, 3000)
+    setIsTransitioning(false)
+    console.log("Transition complete — navigating to /live")
+    router.push(`/session/${sessionCode}/live`)
   }
 
   // 5. Countdown timer in waiting room
@@ -478,11 +470,33 @@ export default function SessionPage() {
   }
 
   // AI Lecture teaching sequence trigger
-  const runAiTopicSpeech = (topicIdx: number) => {
+  const runAiTopicSpeech = async (topicIdx: number) => {
     if (!session || !session.topics || session.topics.length === 0) return
     
     const topic = session.topics[topicIdx]
-    const lectureText = getMockAIScriptForTopic(topic)
+    let lectureText = ""
+
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: `Please give a brief introductory preview for the upcoming lecture topic: ${topic}`,
+          target: "teacher",
+          state: classroomContext.getState()
+        })
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        lectureText = data.answer
+      } else {
+        lectureText = "AI preview unavailable."
+      }
+    } catch (e) {
+      console.error("AI Preview fetch failed:", e)
+      lectureText = "Network error. Please try again."
+    }
     
     triggerAudioSpeech(lectureText, () => {
       // Go to next topic when speech ends
@@ -490,7 +504,7 @@ export default function SessionPage() {
       if (nextIdx < session.topics.length) {
         addToast("Moving to next topic")
         setActiveTopicIdx(nextIdx)
-        setTimeout(() => runAiTopicSpeech(nextIdx), 1500)
+        runAiTopicSpeech(nextIdx)
       } else {
         triggerAudioSpeech("That completes our course outline for today. Feel free to review the session materials.")
       }
@@ -498,19 +512,19 @@ export default function SessionPage() {
   }
 
   // Handle Doubt resolve
-  const handleSendDoubt = (e: React.FormEvent) => {
+  const handleSendDoubt = async (e: React.FormEvent, question: string) => {
     e.preventDefault()
     if (!chatInput.trim()) return
 
     const userMsg = {
       id: Date.now().toString(),
-      sender: studentName || "You",
-      text: chatInput.trim(),
+      sender: isTeacher ? "Professor AI" : studentName || "Student",
+      text: question,
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      isAI: false,
+      isAI: isTeacher,
+      role: isTeacher ? "assistant" as const : "user" as const,
     }
-
-    setMessages((prev) => [...prev, userMsg])
+    classroomContext.addMessage(userMsg)
     setChatInput("")
 
     // Pause teaching speech
@@ -522,26 +536,45 @@ export default function SessionPage() {
       console.warn("Error pausing speech:", err)
     }
 
-    // Call Claude API (Simulated prompt delay)
-    setTimeout(() => {
-      const randomAns = CLAUDE_DOUBT_RESPONSES[Math.floor(Math.random() * CLAUDE_DOUBT_RESPONSES.length)]
-      const aiResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: "Professor AI",
-        text: randomAns,
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        isAI: true,
-      }
-      setMessages((prev) => [...prev, aiResponse])
-      
-      // Speak the Claude response, then resume teaching
-      triggerAudioSpeech(randomAns, () => {
-        triggerAudioSpeech("Great question! Now let's continue...", () => {
-          // Resume main lecture
-          runAiTopicSpeech(activeTopicIdx)
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: question,
+          target: "doubt-chat",
+          state: classroomContext.getState()
         })
       })
-    }, 2000)
+
+      if (res.ok) {
+        const data = await res.json()
+        const aiResponse = {
+          id: (Date.now() + 1).toString(),
+          sender: "Professor AI",
+          text: data.answer,
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          isAI: true,
+          role: "assistant" as const,
+        }
+        classroomContext.addMessage(aiResponse)
+        
+        // Speak the response, then resume teaching
+        triggerAudioSpeech(data.answer, () => {
+          triggerAudioSpeech("Great question! Now let's continue...", () => {
+            // Resume main lecture
+            runAiTopicSpeech(activeTopicIdx)
+          })
+        })
+      } else {
+        const errData = await res.json()
+        console.error("Doubt Chat API Error:", errData)
+        addToast("Sorry, I encountered an error answering that.")
+      }
+    } catch (e) {
+      console.error("Doubt Chat fetch failed:", e)
+      addToast("Network error. Please try again.")
+    }
   }
 
   // Confirm End session
