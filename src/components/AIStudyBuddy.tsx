@@ -39,6 +39,7 @@ import {
 
 interface AIStudyBuddyProps {
   isTeacher?: boolean
+  isStealthMode?: boolean
 }
 
 interface ToolItem {
@@ -378,7 +379,7 @@ const getFallbackImage = (mainTopic: string): string => {
 }
 
 // Custom parser to format simple markdown strings into JSX
-const parseMarkdown = (text: string) => {
+const parseMarkdown = (text: string, isStealthMode: boolean = false) => {
   if (!text) return null
   
   const lines = text.split("\n")
@@ -405,9 +406,9 @@ const parseMarkdown = (text: string) => {
           if (match.index > lastIndex) {
             parts.push(formatted.substring(lastIndex, match.index))
           }
-          // Add bold text styled in purple
+          // Add bold text styled dynamically
           parts.push(
-            <strong key={match.index} className="text-purple-400 font-bold">
+            <strong key={match.index} className={`${isStealthMode ? "text-neutral-900 font-bold" : "text-purple-400 font-bold"}`}>
               {match[1]}
             </strong>
           )
@@ -422,15 +423,21 @@ const parseMarkdown = (text: string) => {
 
         if (isListItem) {
           return (
-            <div key={idx} className="flex items-start gap-2.5 text-white/85 leading-relaxed text-[11px]">
-              <span className="text-purple-400 mt-1.5 h-1.5 w-1.5 rounded-full bg-purple-400 flex-shrink-0" />
+            <div key={idx} className={`flex items-start gap-2.5 leading-relaxed text-[11px] ${
+              isStealthMode ? "text-neutral-600" : "text-white/85"
+            }`}>
+              <span className={`mt-1.5 h-1.5 w-1.5 rounded-full flex-shrink-0 ${
+                isStealthMode ? "bg-neutral-400" : "bg-purple-400"
+              }`} />
               <span>{finalContent}</span>
             </div>
           )
         }
 
         return (
-          <p key={idx} className="text-white/80 leading-relaxed text-[11px]">
+          <p key={idx} className={`leading-relaxed text-[11px] ${
+            isStealthMode ? "text-neutral-650" : "text-white/80"
+          }`}>
             {finalContent}
           </p>
         )
@@ -439,7 +446,7 @@ const parseMarkdown = (text: string) => {
   )
 }
 
-export default function AIStudyBuddy({ isTeacher = false }: AIStudyBuddyProps) {
+export default function AIStudyBuddy({ isTeacher = false, isStealthMode = false }: AIStudyBuddyProps) {
   const [selectedTool, setSelectedTool] = useState<ToolItem>(aiTools[0])
   const [isToolsOpen, setIsToolsOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -582,9 +589,30 @@ export default function AIStudyBuddy({ isTeacher = false }: AIStudyBuddyProps) {
     }
 
     try {
-      const base64 = await fileToBase64(file)
+      let base64 = ""
+      let mimeType = file.type || "application/pdf"
+      
+      const fileExtension = file.name.split(".").pop()?.toLowerCase()
+      if (fileExtension === "docx" || fileExtension === "doc") {
+        const { extractDocxText } = await import("@/lib/officeParser")
+        const extractedText = await extractDocxText(file)
+        base64 = window.btoa(unescape(encodeURIComponent(extractedText)))
+        mimeType = "text/plain"
+      } else if (fileExtension === "pptx" || fileExtension === "ppt") {
+        const { extractPptxText } = await import("@/lib/officeParser")
+        const extractedText = await extractPptxText(file)
+        base64 = window.btoa(unescape(encodeURIComponent(extractedText)))
+        mimeType = "text/plain"
+      } else if (fileExtension === "txt") {
+        const textContent = await file.text()
+        base64 = window.btoa(unescape(encodeURIComponent(textContent)))
+        mimeType = "text/plain"
+      } else {
+        base64 = await fileToBase64(file)
+      }
+      
       setFileBase64(base64)
-      setFileMimeType(file.type || "application/pdf")
+      setFileMimeType(mimeType)
 
       const geminiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY
       if (!geminiKey || geminiKey.startsWith("your_")) {
@@ -596,14 +624,14 @@ export default function AIStudyBuddy({ isTeacher = false }: AIStudyBuddyProps) {
       const prompt = `You are an AI Study Buddy. Analyze the uploaded document carefully and thoroughly. Please generate a structured study response in JSON format. Do not write any markdown wrappers around JSON, just pure raw JSON string. The JSON should have this structure:
 {
   "mainTopic": "Overall subject of the document in 1-2 words (e.g. 'Taj Mahal')",
-  "summary": "markdown format string summarizing the notes briefly with bullet points",
+  "summary": "markdown format string summarizing the notes with bullet points",
   "concepts": [
-    { "title": "Concept Name", "desc": "Brief explanation", "imgPrompt": "A single extremely simple keyword or name (e.g. 'marble', 'construction') that represents this concept for searching on Unsplash. Keep it under 2 words. Do not use full phrases or sentences." }
+    { "title": "Concept Name", "desc": "A comprehensive, in-depth, and detailed step-by-step explanation of the concept using markdown. DO NOT write single-sentence or brief descriptions. Write a thorough breakdown (minimum 3-4 detailed bullet points or paragraphs) explaining how it works, key technical specifications, why it is used, pros/cons, and direct examples from the document. Bold key terms (**word**) so they stand out.", "imgPrompt": "A single extremely simple keyword or name (e.g. 'marble', 'construction') that represents this concept for searching on Unsplash. Keep it under 2 words. Do not use full phrases or sentences." }
   ]
 }`;
 
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${geminiKey}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -740,7 +768,7 @@ Instructions for your response:
       }
       
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${geminiKey}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -768,130 +796,144 @@ Instructions for your response:
     <div className="relative flex flex-row items-stretch w-full h-[640px] max-h-[640px] gap-6 animate-fadeIn">
       
       {/* ─── FLOATING COLLAPSIBLE TOOLS DRAWER (PREMIUM DESIGN) ─── */}
-      <div className="flex flex-row items-stretch z-30">
-        {/* Extreme Left Tab Trigger */}
-        <button
-          type="button"
-          onClick={() => setIsToolsOpen(!isToolsOpen)}
-          className={`flex flex-col items-center justify-center gap-3 px-3 py-7 bg-[#161616]/80 backdrop-blur-md hover:bg-purple-600/10 text-white rounded-r-xl transition-all cursor-pointer shadow-lg hover:shadow-purple-500/10 self-center border border-white/5 hover:border-purple-500/20 active:scale-95 ${
-            isToolsOpen ? "rounded-l-none" : "rounded-xl border-l-2 border-l-purple-500"
-          }`}
-        >
-          <Settings className="h-4 w-4 animate-spin-slow text-purple-400" />
-          <span className="text-[9px] font-extrabold uppercase tracking-widest [writing-mode:vertical-lr] rotate-180 text-white/80 group-hover:text-purple-300">
-            {isToolsOpen ? "Close Tools" : "Tools"}
-          </span>
-        </button>
+      {!isStealthMode && (
+        <div className="flex flex-row items-stretch z-30">
+          {/* Extreme Left Tab Trigger */}
+          <button
+            type="button"
+            onClick={() => setIsToolsOpen(!isToolsOpen)}
+            className={`flex flex-col items-center justify-center gap-3 px-3 py-7 bg-[#161616]/80 backdrop-blur-md hover:bg-purple-600/10 text-white rounded-r-xl transition-all cursor-pointer shadow-lg hover:shadow-purple-500/10 self-center border border-white/5 hover:border-purple-500/20 active:scale-95 ${
+              isToolsOpen ? "rounded-l-none" : "rounded-xl border-l-2 border-l-purple-500"
+            }`}
+          >
+            <Settings className="h-4 w-4 animate-spin-slow text-purple-400" />
+            <span className="text-[9px] font-extrabold uppercase tracking-widest [writing-mode:vertical-lr] rotate-180 text-white/80 group-hover:text-purple-300">
+              {isToolsOpen ? "Close Tools" : "Tools"}
+            </span>
+          </button>
 
-        {/* Sliding Tools Panel */}
-        <div
-          className={`bg-[#121212]/95 backdrop-blur-md border border-white/5 shadow-2xl rounded-r-2xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col ${
-            isToolsOpen ? "w-[320px] p-5 opacity-100 ml-1" : "w-0 p-0 opacity-0 pointer-events-none"
-          }`}
-        >
-          <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-purple-400 animate-pulse" />
-              <h2 className="text-xs font-bold uppercase tracking-wider text-white">AI Toolbox (24)</h2>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsToolsOpen(false)}
-              className="text-white/40 hover:text-white p-1 hover:bg-white/5 rounded-lg transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="space-y-3 flex-1 overflow-y-auto pr-1 scrollbar-thin">
-            {aiTools.map((tool) => {
-              const ToolIcon = tool.icon
-              return (
-                <button
-                  key={tool.id}
-                  type="button"
-                  onClick={() => setSelectedTool(tool)}
-                  className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer flex items-center gap-3.5 group ${
-                    selectedTool.id === tool.id
-                      ? "bg-[#1d1d1d] border-purple-500 text-white shadow-md shadow-purple-500/5"
-                      : "bg-[#1d1d1d]/40 border-white/5 text-white/60 hover:bg-[#1d1d1d] hover:text-white hover:border-white/10"
-                  }`}
-                >
-                  <div className={`p-2 rounded-xl transition-all border ${tool.bgColor}`}>
-                    <ToolIcon className={`h-3.5 w-3.5 ${tool.color} group-hover:scale-110 transition-transform`} />
-                  </div>
-                  <div className="space-y-0.5 flex-1 overflow-hidden">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold truncate">{tool.name}</span>
-                      <span className="inline-flex items-center rounded-full bg-white/5 border border-white/5 px-1.5 py-0.5 text-[7px] text-white/40 uppercase font-semibold">
-                        {tool.tag.split(" ")[0]}
-                      </span>
-                    </div>
-                    <p className="text-[9px] text-white/35 truncate max-w-[155px]">
-                      {tool.description}
-                    </p>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-
-          {selectedTool && (
-            <div className="p-4 bg-purple-500/[0.03] border border-purple-500/10 rounded-xl space-y-2 mt-4 shadow-inner">
-              <div className="flex items-center justify-between border-b border-purple-500/10 pb-1.5">
-                <span className="text-[9px] uppercase font-extrabold text-purple-400 tracking-wider flex items-center gap-1">
-                  <Brain className="h-2.5 w-2.5" /> Guide
-                </span>
-                <a
-                  href={selectedTool.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-[9px] text-purple-400 hover:text-purple-300 font-bold transition-colors"
-                >
-                  Open <ExternalLink className="h-2.5 w-2.5" />
-                </a>
+          {/* Sliding Tools Panel */}
+          <div
+            className={`bg-[#121212]/95 backdrop-blur-md border border-white/5 shadow-2xl rounded-r-2xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col ${
+              isToolsOpen ? "w-[320px] p-5 opacity-100 ml-1" : "w-0 p-0 opacity-0 pointer-events-none"
+            }`}
+          >
+            <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-purple-400 animate-pulse" />
+                <h2 className="text-xs font-bold uppercase tracking-wider text-white">AI Toolbox (24)</h2>
               </div>
-              <h3 className="text-xs font-extrabold text-white">{selectedTool.name}</h3>
-              <p className="text-[10px] text-white/50 leading-relaxed font-medium">
-                {selectedTool.guide}
-              </p>
+              <button
+                type="button"
+                onClick={() => setIsToolsOpen(false)}
+                className="text-white/40 hover:text-white p-1 hover:bg-white/5 rounded-lg transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-          )}
+
+            <div className="space-y-3 flex-1 overflow-y-auto pr-1 scrollbar-thin">
+              {aiTools.map((tool) => {
+                const ToolIcon = tool.icon
+                return (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    onClick={() => setSelectedTool(tool)}
+                    className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer flex items-center gap-3.5 group ${
+                      selectedTool.id === tool.id
+                        ? "bg-[#1d1d1d] border-purple-500 text-white shadow-md shadow-purple-500/5"
+                        : "bg-[#1d1d1d]/40 border-white/5 text-white/60 hover:bg-[#1d1d1d] hover:text-white hover:border-white/10"
+                    }`}
+                  >
+                    <div className={`p-2 rounded-xl transition-all border ${tool.bgColor}`}>
+                      <ToolIcon className={`h-3.5 w-3.5 ${tool.color} group-hover:scale-110 transition-transform`} />
+                    </div>
+                    <div className="space-y-0.5 flex-1 overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold truncate">{tool.name}</span>
+                        <span className="inline-flex items-center rounded-full bg-white/5 border border-white/5 px-1.5 py-0.5 text-[7px] text-white/40 uppercase font-semibold">
+                          {tool.tag.split(" ")[0]}
+                        </span>
+                      </div>
+                      <p className="text-[9px] text-white/35 truncate max-w-[155px]">
+                        {tool.description}
+                      </p>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {selectedTool && (
+              <div className="p-4 bg-purple-500/[0.03] border border-purple-500/10 rounded-xl space-y-2 mt-4 shadow-inner">
+                <div className="flex items-center justify-between border-b border-purple-500/10 pb-1.5">
+                  <span className="text-[9px] uppercase font-extrabold text-purple-400 tracking-wider flex items-center gap-1">
+                    <Brain className="h-2.5 w-2.5" /> Guide
+                  </span>
+                  <a
+                    href={selectedTool.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[9px] text-purple-400 hover:text-purple-300 font-bold transition-colors"
+                  >
+                    Open <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                </div>
+                <h3 className="text-xs font-extrabold text-white">{selectedTool.name}</h3>
+                <p className="text-[10px] text-white/50 leading-relaxed font-medium">
+                  {selectedTool.guide}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ─── MAIN WORKSPACE: SPLIT SCREEN LAYOUT ─── */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 h-full max-h-full">
         
         {/* ─── LEFT PANEL: DOCUMENT SUMMARY & TOPIC EXPLORER ─── */}
-        <div className="flex flex-col bg-[#111] border border-white/5 rounded-2xl overflow-hidden h-full">
+        <div className={`flex flex-col rounded-2xl overflow-hidden h-full border transition-all duration-300 ${
+          isStealthMode 
+            ? "bg-white border-neutral-200 text-neutral-800 shadow-sm" 
+            : "bg-[#111] border-white/5 text-white"
+        }`}>
           {!fileUploaded ? (
             <div
               onDragOver={handleDragOver}
               onDrop={handleDrop}
-              className="flex-1 border-2 border-dashed border-white/5 rounded-2xl m-4 flex flex-col items-center justify-center gap-4 hover:border-purple-500/20 transition-all group"
+              className={`flex-1 border-2 border-dashed rounded-2xl m-4 flex flex-col items-center justify-center gap-4 transition-all group ${
+                isStealthMode 
+                  ? "border-neutral-200 bg-neutral-50/50 hover:border-neutral-300" 
+                  : "border-white/5 hover:border-purple-500/20"
+              }`}
             >
               {uploading ? (
                 <div className="space-y-4 text-center">
-                  <Loader2 className="h-10 w-10 animate-spin text-purple-500 mx-auto" />
+                  <Loader2 className={`h-10 w-10 animate-spin mx-auto ${isStealthMode ? "text-neutral-500" : "text-purple-500"}`} />
                   <div>
-                    <h3 className="text-sm font-bold text-white">Analyzing document...</h3>
-                    <p className="text-xs text-white/40 mt-1">Extracting topics using Agentic AI</p>
+                    <h3 className={`text-sm font-bold ${isStealthMode ? "text-neutral-700" : "text-white"}`}>Analyzing document...</h3>
+                    <p className={`text-xs mt-1 ${isStealthMode ? "text-neutral-400" : "text-white/40"}`}>Extracting topics...</p>
                   </div>
                 </div>
               ) : (
                 <>
-                  <div className="h-14 w-14 rounded-full bg-purple-500/5 border border-purple-500/10 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-all">
+                  <div className={`h-14 w-14 rounded-full flex items-center justify-center transition-all border ${
+                    isStealthMode 
+                      ? "bg-neutral-100 border-neutral-200 text-neutral-500" 
+                      : "bg-purple-500/5 border-purple-500/10 text-purple-400 group-hover:scale-110"
+                  }`}>
                     <UploadCloud className="h-6 w-6" />
                   </div>
                   <div className="text-center">
-                    <h3 className="text-sm font-bold text-white">Upload Slides, PPTs, PDFs, or Text</h3>
-                    <p className="text-xs text-white/40 mt-1">
+                    <h3 className={`text-sm font-bold ${isStealthMode ? "text-neutral-700" : "text-white"}`}>Upload Slides, PPTs, PDFs, or Text</h3>
+                    <p className={`text-xs mt-1 ${isStealthMode ? "text-neutral-400" : "text-white/40"}`}>
                       Drag study file here or{" "}
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="text-purple-400 font-semibold hover:underline cursor-pointer"
+                        className={`font-semibold hover:underline cursor-pointer ${isStealthMode ? "text-neutral-600 font-bold" : "text-purple-400"}`}
                       >
                         browse
                       </button>
@@ -904,7 +946,7 @@ Instructions for your response:
                     className="hidden"
                     accept=".txt,.pdf,.docx,.doc,.pptx,.ppt"
                   />
-                  <div className="flex gap-3 text-[9px] text-white/20 font-bold uppercase mt-2">
+                  <div className={`flex gap-3 text-[9px] font-bold uppercase mt-2 ${isStealthMode ? "text-neutral-350" : "text-white/20"}`}>
                     <span>PDF</span>
                     <span>•</span>
                     <span>PPTX</span>
@@ -919,21 +961,33 @@ Instructions for your response:
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
               {/* File Info Bar */}
-              <div className="px-6 py-4 border-b border-white/5 bg-black/20 flex items-center justify-between">
+              <div className={`px-6 py-4 border-b flex items-center justify-between transition-colors duration-300 ${
+                isStealthMode ? "border-neutral-200 bg-neutral-50" : "border-white/5 bg-black/20"
+              }`}>
                 <div className="flex items-center gap-3 overflow-hidden">
-                  <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400 flex-shrink-0">
+                  <div className={`p-2 rounded-lg flex-shrink-0 ${
+                    isStealthMode ? "bg-neutral-105 text-neutral-500 border border-neutral-200/60" : "bg-purple-500/10 text-purple-400"
+                  }`}>
                     <FileText className="h-4 w-4" />
                   </div>
                   <div className="overflow-hidden">
-                    <h3 className="text-xs font-bold text-white truncate max-w-[150px]">{fileName}</h3>
-                    <p className="text-[10px] text-white/40 mt-0.5">{fileSize}</p>
+                    <h3 className={`text-xs font-bold truncate max-w-[150px] ${
+                      isStealthMode ? "text-neutral-700" : "text-white"
+                    }`}>{fileName}</h3>
+                    <p className={`text-[10px] mt-0.5 ${
+                      isStealthMode ? "text-neutral-400" : "text-white/40"
+                    }`}>{fileSize}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-2.5 py-1.5 rounded-lg border border-white/5 bg-white/[0.02] text-[10px] font-bold text-white/70 hover:bg-white/5 transition-all cursor-pointer"
+                    className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-bold transition-all cursor-pointer ${
+                      isStealthMode
+                        ? "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+                        : "border-white/5 bg-white/[0.02] text-white/70 hover:bg-white/5"
+                    }`}
                   >
                     Upload New
                   </button>
@@ -947,7 +1001,11 @@ Instructions for your response:
                       setFileMimeType("")
                       setMessages([{ sender: "ai", text: "Hi! Ask me anything about your uploaded study notes." }])
                     }}
-                    className="px-2.5 py-1.5 rounded-lg border border-red-500/20 bg-red-500/10 text-[10px] font-bold text-red-400 hover:bg-red-500/20 transition-all cursor-pointer flex items-center gap-1"
+                    className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      isStealthMode
+                        ? "border-red-200 bg-red-50 text-red-500 hover:bg-red-100"
+                        : "border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                    }`}
                   >
                     <Trash2 className="h-3 w-3" />
                     Delete
@@ -960,40 +1018,78 @@ Instructions for your response:
                 
                 {/* Overview Summary */}
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2 border-b border-white/5 pb-2">
-                    <BookOpen className="h-4 w-4 text-purple-400" />
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-white">Overview Summary</h3>
+                  <div className={`flex items-center gap-2 border-b pb-2 ${
+                    isStealthMode ? "border-neutral-200" : "border-white/5"
+                  }`}>
+                    <BookOpen className={`h-4 w-4 ${isStealthMode ? "text-neutral-500" : "text-purple-400"}`} />
+                    <h3 className={`text-xs font-bold uppercase tracking-wider ${
+                      isStealthMode ? "text-neutral-650" : "text-white"
+                    }`}>
+                      {isStealthMode ? "Document Outline" : "Overview Summary"}
+                    </h3>
                   </div>
-                  <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl font-sans shadow-inner space-y-2">
-                    {parseMarkdown(summary)}
+                  <div className={`p-5 rounded-xl font-sans shadow-inner space-y-2 border transition-all duration-300 ${
+                    isStealthMode 
+                      ? "bg-neutral-50 border-neutral-200 text-neutral-600 shadow-sm" 
+                      : "bg-white/[0.02] border-white/[0.05]"
+                  }`}>
+                    {parseMarkdown(summary, isStealthMode)}
                   </div>
                 </div>
 
                 {/* Topics Explained */}
                 {concepts.length > 0 && (
                   <div className="space-y-4">
-                    <div className="flex items-center gap-2 border-b border-white/5 pb-2">
-                      <Sparkles className="h-4 w-4 text-purple-400" />
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-white">Topics Explained</h3>
+                    <div className={`flex items-center gap-2 border-b pb-2 ${
+                      isStealthMode ? "border-neutral-200" : "border-white/5"
+                    }`}>
+                      <Sparkles className={`h-4 w-4 ${isStealthMode ? "text-neutral-500" : "text-purple-400"}`} />
+                      <h3 className={`text-xs font-bold uppercase tracking-wider ${
+                        isStealthMode ? "text-neutral-650" : "text-white"
+                      }`}>
+                        {isStealthMode ? "Section Details" : "Topics Explained"}
+                      </h3>
                     </div>
 
                     <div className="space-y-5">
                       {concepts.map((concept, idx) => (
                         <div
                           key={idx}
-                          className="bg-[#181818] border border-white/5 rounded-xl p-4 space-y-3 hover:border-purple-500/10 transition-colors"
+                          className={`border rounded-xl p-4 space-y-3 transition-colors duration-300 ${
+                            isStealthMode 
+                              ? "bg-white border-neutral-200 text-neutral-800 shadow-sm" 
+                              : "bg-[#181818] border-white/5 hover:border-purple-500/10"
+                          }`}
                         >
-                          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                            <h4 className="text-xs font-bold text-purple-300">{concept.title}</h4>
-                            <span className="text-[8px] bg-purple-500/10 px-2 py-0.5 rounded text-purple-400 font-semibold uppercase">
-                              Concept {idx + 1}
+                          <div className={`flex items-center justify-between border-b pb-2 ${
+                            isStealthMode ? "border-neutral-200" : "border-white/5"
+                          }`}>
+                            <h4 className={`text-xs font-bold ${
+                              isStealthMode ? "text-neutral-700 font-sans" : "text-purple-300"
+                            }`}>{concept.title}</h4>
+                            <span className={`text-[8px] px-2 py-0.5 rounded font-semibold uppercase border ${
+                              isStealthMode 
+                                ? "bg-neutral-100 text-neutral-500 border-neutral-200" 
+                                : "bg-purple-500/10 text-purple-400 border-purple-500/15"
+                            }`}>
+                              Section {idx + 1}
                             </span>
                           </div>
 
-                          {/* YouTube Learning Videos (UPPER SECTION) */}
+                          <div className={`text-[11px] leading-relaxed font-sans mt-2 pt-1 ${
+                            isStealthMode ? "text-neutral-600" : "text-white/80"
+                          }`}>
+                            {parseMarkdown(concept.desc, isStealthMode)}
+                          </div>
+
+                          {/* YouTube Learning Videos (LOWER SECTION - AFTER EXPLANATION) */}
                           {concept.videos && concept.videos.length > 0 && (
-                            <div className="space-y-2">
-                              <span className="text-[9px] uppercase font-bold text-white/30 tracking-wider flex items-center gap-1.5">
+                            <div className={`space-y-2 mt-4 pt-3 border-t ${
+                              isStealthMode ? "border-neutral-200" : "border-white/5"
+                            }`}>
+                              <span className={`text-[9px] uppercase font-bold tracking-wider flex items-center gap-1.5 ${
+                                isStealthMode ? "text-neutral-400" : "text-white/30"
+                              }`}>
                                 <Video className="h-3 w-3" /> Recommended Video Tutorials
                               </span>
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1003,13 +1099,21 @@ Instructions for your response:
                                     href={`https://www.youtube.com/watch?v=${vid.id}`}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="flex items-center gap-2 p-2 bg-black/20 hover:bg-black/40 border border-white/5 rounded-lg group transition-all"
+                                    className={`flex items-center gap-2 p-2 rounded-lg group transition-all border ${
+                                      isStealthMode 
+                                        ? "bg-neutral-50 hover:bg-neutral-100/80 border-neutral-200 text-neutral-700" 
+                                        : "bg-black/20 hover:bg-black/40 border-white/5 text-white/70"
+                                    }`}
                                   >
                                     <div className="relative h-10 w-16 bg-neutral-900 rounded overflow-hidden flex-shrink-0">
                                       {/* eslint-disable-next-line @next/next/no-img-element */}
                                       <img src={vid.thumbnail} alt={vid.title} className="object-cover w-full h-full" />
                                     </div>
-                                    <span className="text-[10px] text-white/70 group-hover:text-purple-400 font-medium line-clamp-2 leading-snug">
+                                    <span className={`text-[10px] font-medium line-clamp-2 leading-snug ${
+                                      isStealthMode 
+                                        ? "text-neutral-600 group-hover:text-neutral-900" 
+                                        : "text-white/70 group-hover:text-purple-400"
+                                    }`}>
                                       {vid.title}
                                     </span>
                                   </a>
@@ -1017,10 +1121,6 @@ Instructions for your response:
                               </div>
                             </div>
                           )}
-                          
-                          <p className="text-[11px] text-white/60 leading-relaxed font-sans mt-2 pt-1">
-                            {concept.desc}
-                          </p>
                         </div>
                       ))}
                     </div>
@@ -1032,20 +1132,36 @@ Instructions for your response:
         </div>
 
         {/* ─── RIGHT PANEL: DOUBT CHAT ─── */}
-        <div className="flex flex-col bg-[#111] border border-white/5 rounded-2xl overflow-hidden h-full">
+        <div className={`flex flex-col rounded-2xl overflow-hidden h-full border transition-all duration-300 ${
+          isStealthMode 
+            ? "bg-white border-neutral-200 text-neutral-800 shadow-sm" 
+            : "bg-[#111] border-white/5"
+        }`}>
           {/* Header */}
-          <div className="px-6 py-4.5 border-b border-white/5 bg-black/20 flex items-center justify-between">
+          <div className={`px-6 py-4.5 border-b flex items-center justify-between transition-colors duration-300 ${
+            isStealthMode ? "border-neutral-200 bg-neutral-50" : "border-white/5 bg-black/20"
+          }`}>
             <div className="flex items-center gap-2">
-              <HelpCircle className="h-4 w-4 text-purple-400" />
-              <h2 className="text-xs font-bold uppercase tracking-wider text-white">Doubt Chat</h2>
+              <HelpCircle className={`h-4 w-4 ${isStealthMode ? "text-neutral-500" : "text-purple-400"}`} />
+              <h2 className={`text-xs font-bold uppercase tracking-wider ${
+                isStealthMode ? "text-neutral-600" : "text-white"
+              }`}>
+                {isStealthMode ? "Page Annotations & Notes" : "Doubt Chat"}
+              </h2>
             </div>
-            <span className="text-[9px] font-bold text-purple-400 tracking-wider uppercase bg-purple-500/10 px-2.5 py-1 rounded-full border border-purple-500/15">
-              Document AI Active
+            <span className={`text-[9px] font-bold tracking-wider uppercase px-2.5 py-1 rounded-full border transition-colors ${
+              isStealthMode 
+                ? "text-neutral-500 bg-neutral-100 border-neutral-200" 
+                : "text-purple-400 bg-purple-500/10 border-purple-500/15"
+            }`}>
+              {isStealthMode ? "Index View Active" : "Document AI Active"}
             </span>
           </div>
 
           {/* Chat area */}
-          <div className="flex-1 flex flex-col p-6 overflow-hidden bg-[#131313]/30">
+          <div className={`flex-1 flex flex-col p-6 overflow-hidden transition-colors duration-300 ${
+            isStealthMode ? "bg-white" : "bg-[#131313]/30"
+          }`}>
             {/* Bubble List */}
             <div className="flex-1 space-y-4 overflow-y-auto pb-4 pr-1 scrollbar-thin">
               {messages.map((msg, idx) => (
@@ -1054,21 +1170,29 @@ Instructions for your response:
                   className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-xl px-4 py-2.5 text-xs leading-relaxed ${
+                    className={`max-w-[85%] rounded-xl px-4 py-2.5 text-xs leading-relaxed border transition-colors duration-300 ${
                       msg.sender === "user"
-                        ? "bg-purple-600 text-white shadow-md shadow-purple-600/10"
-                        : "bg-[#1d1d1d] text-white/80 border border-white/5 shadow-inner"
+                        ? isStealthMode
+                          ? "bg-neutral-700 text-white border-neutral-800 shadow-sm"
+                          : "bg-purple-600 text-white border-transparent shadow-md shadow-purple-600/10"
+                        : isStealthMode
+                          ? "bg-neutral-50 text-neutral-600 border-neutral-200/80 shadow-sm"
+                          : "bg-[#1d1d1d] text-white/80 border-white/5 shadow-inner"
                     }`}
                   >
-                    {msg.sender === "ai" ? parseMarkdown(msg.text) : msg.text}
+                    {msg.sender === "ai" ? parseMarkdown(msg.text, isStealthMode) : msg.text}
                   </div>
                 </div>
               ))}
               {sendingChat && (
                 <div className="flex justify-start">
-                  <div className="bg-[#1d1d1d] text-white/40 border border-white/5 rounded-xl px-4 py-2.5 text-xs flex items-center gap-2 animate-pulse">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" />
-                    Analyzing reference details...
+                  <div className={`rounded-xl px-4 py-2.5 text-xs flex items-center gap-2 animate-pulse border ${
+                    isStealthMode
+                      ? "bg-neutral-50 text-neutral-400 border-neutral-250"
+                      : "bg-[#1d1d1d] text-white/40 border-white/5"
+                  }`}>
+                    <Loader2 className={`h-3.5 w-3.5 animate-spin ${isStealthMode ? "text-neutral-500" : "text-purple-400"}`} />
+                    Retrieving index data...
                   </div>
                 </div>
               )}
@@ -1076,19 +1200,29 @@ Instructions for your response:
             </div>
 
             {/* Input Bar */}
-            <form onSubmit={handleSendMessage} className="flex gap-2 pt-4 border-t border-white/5">
+            <form onSubmit={handleSendMessage} className={`flex gap-2 pt-4 border-t ${
+              isStealthMode ? "border-neutral-200" : "border-white/5"
+            }`}>
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask doubt about notes..."
+                placeholder={isStealthMode ? "Type page annotation..." : "Ask doubt about notes..."}
                 disabled={sendingChat || !fileUploaded}
-                className="flex-1 bg-black/30 border border-white/5 rounded-xl px-4 py-3 text-xs text-white placeholder-white/25 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20 transition-all disabled:opacity-40"
+                className={`flex-1 rounded-xl px-4 py-3 text-xs focus:outline-none focus:ring-1 transition-all disabled:opacity-40 border ${
+                  isStealthMode
+                    ? "bg-white border-neutral-300 text-neutral-800 placeholder-neutral-400 focus:border-neutral-500 focus:ring-neutral-500/20"
+                    : "bg-black/30 border-white/5 text-white placeholder-white/25 focus:border-purple-500 focus:ring-purple-500/20"
+                }`}
               />
               <button
                 type="submit"
                 disabled={!input.trim() || sendingChat || !fileUploaded}
-                className="p-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl transition-all shadow-md shadow-purple-500/10 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center"
+                className={`p-3 rounded-xl transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center ${
+                  isStealthMode
+                    ? "bg-neutral-700 hover:bg-neutral-800 text-white shadow-sm"
+                    : "bg-purple-600 hover:bg-purple-700 text-white shadow-md shadow-purple-500/10"
+                }`}
               >
                 <Send className="h-4 w-4" />
               </button>

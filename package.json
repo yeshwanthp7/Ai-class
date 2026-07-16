@@ -19,6 +19,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^12.15.0",
+    "jszip": "^3.10.1",
     "livekit-client": "^2.19.2",
     "livekit-server-sdk": "^2.15.5",
     "lucide-react": "^1.21.0",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/jszip": "^3.4.0",
     "@types/node": "^20",
     "@types/pdfjs-dist": "^2.10.377",
     "@types/peerjs": "^0.0.30",

@@ -46,6 +46,32 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Override purple to match Blue (Option 2) */
+  --color-purple-50: #eff6ff;
+  --color-purple-100: #dbeafe;
+  --color-purple-200: #bfdbfe;
+  --color-purple-300: #93c5fd;
+  --color-purple-400: #60a5fa;
+  --color-purple-500: #3b82f6;
+  --color-purple-600: #2563eb;
+  --color-purple-700: #1d4ed8;
+  --color-purple-800: #1e40af;
+  --color-purple-900: #1e3a8a;
+  --color-purple-950: #172554;
+
+  /* Override indigo to match Amber (Option 2) */
+  --color-indigo-50: #fffbeb;
+  --color-indigo-100: #fef3c7;
+  --color-indigo-200: #fde68a;
+  --color-indigo-300: #fcd34d;
+  --color-indigo-400: #fbbf24;
+  --color-indigo-500: #f59e0b;
+  --color-indigo-600: #d97706;
+  --color-indigo-700: #b45309;
+  --color-indigo-800: #92400e;
+  --color-indigo-900: #78350f;
+  --color-indigo-950: #451a03;
 }
 
 :root {
@@ -109,7 +135,7 @@
   --chart-5: oklch(0.269 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: oklch(0.60 0.18 250);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);

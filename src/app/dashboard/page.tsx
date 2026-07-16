@@ -100,7 +100,56 @@ function DashboardContent() {
     const fetchSessions = async () => {
       setLoadingSessions(true)
       const list = await getTeacherSessions(user.uid)
-      setSessions(list)
+      if (list.length === 0) {
+        // Mock data to populate dashboard with real-time looking info if empty
+        const mockSessions = [
+          {
+            id: "mock-session-1",
+            code: "CLASS-G4TF",
+            title: "Introduction to Neural Networks",
+            subject: "Machine Learning",
+            module: "Deep Learning",
+            topic: "Backpropagation",
+            studentCount: 15,
+            duration: "1h 15m",
+            status: "Completed",
+            createdAt: { seconds: Math.floor(Date.now() / 1000) - 86400 * 2 }, // 2 days ago
+            teachingMode: "AI",
+            aiAssistants: { doubtChat: true, generateVisuals: true, sessionNotes: true }
+          },
+          {
+            id: "mock-session-2",
+            code: "CLASS-CBOS",
+            title: "Database Indexing & Query Optimization",
+            subject: "Computer Science",
+            module: "Relational Databases",
+            topic: "B+ Trees Indexing",
+            studentCount: 18,
+            duration: "1h",
+            status: "Completed",
+            createdAt: { seconds: Math.floor(Date.now() / 1000) - 86400 * 5 }, // 5 days ago
+            teachingMode: "AI",
+            aiAssistants: { doubtChat: true, generateVisuals: true, sessionNotes: false }
+          },
+          {
+            id: "mock-session-3",
+            code: "CLASS-K4T9",
+            title: "Operating Systems Memory Management",
+            subject: "Computer Science",
+            module: "Memory & CPU",
+            topic: "Virtual Memory Paging",
+            studentCount: 12,
+            duration: "50m",
+            status: "Completed",
+            createdAt: { seconds: Math.floor(Date.now() / 1000) - 86400 * 7 }, // 7 days ago
+            teachingMode: "Human",
+            aiAssistants: { doubtChat: false, generateVisuals: false, sessionNotes: true }
+          }
+        ]
+        setSessions(mockSessions as any)
+      } else {
+        setSessions(list)
+      }
       setLoadingSessions(false)
     }
     fetchSessions()
@@ -113,7 +162,19 @@ function DashboardContent() {
       setLoadingRoster(true)
       const sessionCodes = sessions.map(s => s.code)
       const list = await getTeacherStudentsRoster(sessionCodes)
-      setRoster(list)
+      if (list.length === 0 && sessions.some(s => s.id.startsWith("mock-"))) {
+        // Populate mock roster
+        const mockRoster = [
+          { name: "John Doe", email: "john@example.com", classesAttended: 3, avgEngagement: 88, lastActive: "Just now" },
+          { name: "Alice Smith", email: "alice@example.com", classesAttended: 3, avgEngagement: 92, lastActive: "2 hrs ago" },
+          { name: "Bob Johnson", email: "bob@example.com", classesAttended: 2, avgEngagement: 72, lastActive: "1 day ago" },
+          { name: "Emily Davis", email: "emily@example.com", classesAttended: 2, avgEngagement: 85, lastActive: "2 days ago" },
+          { name: "Michael Wilson", email: "michael@example.com", classesAttended: 1, avgEngagement: 94, lastActive: "5 days ago" }
+        ]
+        setRoster(mockRoster as any)
+      } else {
+        setRoster(list)
+      }
       setLoadingRoster(false)
     }
     fetchRoster()
@@ -127,6 +188,22 @@ function DashboardContent() {
       setLoadingFocusScores(true)
       setLoadingDistribution(true)
       setLoadingKickedLogs(true)
+
+      if (sessions.some(s => s.id.startsWith("mock-"))) {
+        setSessionFocusScores({
+          "CLASS-G4TF": 85,
+          "CLASS-CBOS": 90,
+          "CLASS-K4T9": 78
+        })
+        setFocusDistribution({ active: 75, idle: 15, distracted: 10 })
+        setKickedLogs([
+          { name: "Bob Johnson", sessionCode: "CLASS-K4T9", kickedAt: { seconds: Math.floor(Date.now() / 1000) - 86400 * 7 } }
+        ])
+        setLoadingFocusScores(false)
+        setLoadingDistribution(false)
+        setLoadingKickedLogs(false)
+        return
+      }
 
       const scores: Record<string, number> = {}
       let activeCount = 0

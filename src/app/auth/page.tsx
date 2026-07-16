@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { ArrowLeft, Sparkles, Loader2, AlertCircle } from "lucide-react"
+import { ArrowLeft, Sparkles, Loader2, AlertCircle, Tv, BookOpen } from "lucide-react"
 import {
   signInWithGoogle,
   signInWithEmail,
@@ -247,7 +247,7 @@ export default function AuthPage() {
           {/* Branding & Quote */}
           <div className="relative z-10 my-auto flex flex-col gap-8">
             {/* Brand Logo */}
-            <div className="flex items-center gap-2.5 border-l-2 border-purple-500/40 pl-3 drop-shadow-[0_0_8px_rgba(147,51,234,0.3)]">
+            <div className="flex items-center gap-2.5 border-l-2 border-purple-500/40 pl-3 drop-shadow-[0_0_8px_rgba(37,99,235,0.3)]">
               <Image src="/logo.png" alt="Class AI" width={36} height={36} />
               <span className="text-xl font-bold tracking-tight text-white">
                 Class<span className="text-purple-400">AI</span>
@@ -260,7 +260,7 @@ export default function AuthPage() {
                 “Our students are more engaged than ever”
               </blockquote>
               <cite className="mt-4 block text-base font-medium text-purple-400/80 not-italic">
-                — Sarah K., High School Teacher
+                — Sarah K.
               </cite>
             </div>
           </div>
@@ -522,7 +522,7 @@ export default function AuthPage() {
                           type="text"
                           required
                           disabled={isSubmitting || !isFirebaseConfigured}
-                          placeholder="Dr. Sarah Jenkins"
+                          placeholder="Enter your full name"
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                           className="w-full px-3.5 py-2.5 text-sm bg-white border border-neutral-200 rounded-lg text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-colors disabled:opacity-50"
@@ -612,24 +612,34 @@ export default function AuthPage() {
                         <button
                           type="button"
                           onClick={() => setStudentFlow("live")}
-                          className="w-full text-left p-5 border border-neutral-100 rounded-xl bg-white hover:bg-neutral-50/50 hover:border-neutral-200 transition-all shadow-sm flex flex-col gap-1.5 cursor-pointer"
+                          className="w-full text-left p-5 border border-neutral-100 rounded-xl bg-white hover:bg-purple-500/[0.02] hover:border-purple-200 transition-all shadow-sm flex items-center gap-4 cursor-pointer group"
                         >
-                          <span className="text-sm font-bold text-neutral-900">Join a Live Class</span>
-                          <span className="text-xs text-neutral-500 leading-relaxed">
-                            Enter a code provided by your teacher to join the classroom session.
-                          </span>
+                          <div className="p-3 bg-purple-500/10 rounded-xl text-purple-600 transition-all border border-purple-500/20 group-hover:scale-105 group-hover:bg-purple-500/20">
+                            <Tv className="h-5 w-5" />
+                          </div>
+                          <div className="flex-1 space-y-1">
+                            <span className="text-sm font-bold text-neutral-900 block group-hover:text-purple-600 transition-colors">Join a Live Class</span>
+                            <span className="text-xs text-neutral-500 leading-relaxed block">
+                              Enter a code provided by your teacher to join the classroom session.
+                            </span>
+                          </div>
                         </button>
 
                         {/* Option B: Self Learn / AI Study Buddy */}
                         <button
                           type="button"
                           onClick={() => setStudentFlow("self-learn")}
-                          className="w-full text-left p-5 border border-neutral-100 rounded-xl bg-white hover:bg-neutral-50/50 hover:border-neutral-200 transition-all shadow-sm flex flex-col gap-1.5 cursor-pointer"
+                          className="w-full text-left p-5 border border-neutral-100 rounded-xl bg-white hover:bg-purple-500/[0.02] hover:border-purple-200 transition-all shadow-sm flex items-center gap-4 cursor-pointer group"
                         >
-                          <span className="text-sm font-bold text-neutral-900">Self Learn (AI Study Buddy)</span>
-                          <span className="text-xs text-neutral-500 leading-relaxed">
-                            Upload slides, notes, or PDFs to get instant shortcut explanations, images & doubt chat.
-                          </span>
+                          <div className="p-3 bg-purple-500/10 rounded-xl text-purple-600 transition-all border border-purple-500/20 group-hover:scale-105 group-hover:bg-purple-500/20">
+                            <BookOpen className="h-5 w-5" />
+                          </div>
+                          <div className="flex-1 space-y-1">
+                            <span className="text-sm font-bold text-neutral-900 block group-hover:text-purple-600 transition-colors">Self Learn (AI Study Buddy)</span>
+                            <span className="text-xs text-neutral-500 leading-relaxed block">
+                              Upload slides, notes, or PDFs to get instant shortcut explanations, images & doubt chat.
+                            </span>
+                          </div>
                         </button>
                       </div>
                     </div>

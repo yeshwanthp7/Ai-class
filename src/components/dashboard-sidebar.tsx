@@ -71,7 +71,7 @@ export default function DashboardSidebar({
         {/* Logo */}
         <Link
           href="/dashboard"
-          className="flex items-center gap-2.5 border-l-2 border-purple-500/40 pl-3 drop-shadow-[0_0_8px_rgba(147,51,234,0.3)] hover:border-purple-500/70 transition-all"
+          className="flex items-center gap-2.5 border-l-2 border-purple-500/40 pl-3 drop-shadow-[0_0_8px_rgba(37,99,235,0.3)] hover:border-purple-500/70 transition-all"
         >
           <Image src="/logo.png" alt="Class AI" width={32} height={32} />
           <span className="text-lg font-bold tracking-tight text-white">
