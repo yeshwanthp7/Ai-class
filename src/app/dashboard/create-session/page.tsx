@@ -33,7 +33,7 @@ const SUGGESTED_TOPICS = ["Introduction", "Core Concepts", "Examples", "Practice
 export default function CreateSessionPage() {
   const [user, setUser] = useState<any>(null)
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-  const [step, setStep] = useState(1) // 1: Mode, 2: Info, 3: Content, 4: Launch
+  const [step, setStep] = useState(2) // Start directly on Step 2 (Session Info) to bypass Teaching Mode selection
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const [teachingMode, setTeachingMode] = useState<"AI" | "Human" | null>("AI")
@@ -601,13 +601,6 @@ export default function CreateSessionPage() {
                     <ArrowRight className="h-4 w-4" />
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setStep(1)}
-                    className="w-full text-center text-xs font-semibold text-white/40 hover:text-white/60 transition-colors cursor-pointer"
-                  >
-                    Back to Teaching Mode
-                  </button>
                 </div>
               </form>
             )}
