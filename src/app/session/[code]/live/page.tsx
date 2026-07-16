@@ -31,7 +31,7 @@ import {
 } from "lucide-react"
 
 import { getFile } from "@/lib/fileStorage"
-import { extractPDFPages } from "@/lib/pdfParser"
+import { extractDocumentPages } from "@/lib/pdfParser"
 import StudentCamera from "@/components/StudentCamera"
 import type { FocusMetrics } from "@/hooks/useFocusTracker"
 import { subscribeToStudents, subscribeToSession, syncClassroomProgress, setStudentOffline, checkIsIdKicked, checkIsKicked, isStudentRegistered, endSession } from "@/lib/session-service"
@@ -379,7 +379,7 @@ export default function LiveClassroomPage() {
       try {
         const file = await getFile("session-pdf")
         if (file) {
-          const pages = await extractPDFPages(file)
+          const pages = await extractDocumentPages(file)
           if (pages.length > 0) {
             setPdfPages(pages)
             setIsPdfMode(true)
@@ -1580,8 +1580,29 @@ export default function LiveClassroomPage() {
             </h4>
             <div className="flex overflow-x-auto gap-3 pb-2 snap-x cscroll">
               {/* Local User Tile */}
-              <div className={`w-48 md:w-64 lg:w-72 shrink-0 snap-center relative aspect-video rounded-xl border ${localMetrics.status === "focused" ? "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" : localMetrics.status === "distracted" ? "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.35)]" : localMetrics.status === "away" ? "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]" : "border-gray-600"} bg-[#14141b] overflow-hidden transition-all duration-500`}>
-              <div className="absolute inset-0 z-0">
+              <div className={`w-48 md:w-64 lg:w-72 shrink-0 snap-center relative aspect-video rounded-xl border ${
+                localMetrics.status === "focused" || localMetrics.status === "active" ? "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" : 
+                localMetrics.status === "distracted" ? "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.35)]" : 
+                localMetrics.status === "away" ? "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]" : 
+                localMetrics.status === "sleeping" ? "border-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)]" : 
+                localMetrics.status === "phone" ? "border-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse" : 
+                "border-gray-600"
+              } bg-[#14141b] overflow-hidden transition-all duration-500`}>
+                {/* Visual Alert Overlays */}
+                {localMetrics.status === "sleeping" && (
+                  <div className="absolute inset-0 bg-black/75 z-10 flex flex-col items-center justify-center gap-1.5">
+                    <span className="text-2xl">😴</span>
+                    <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">Sleeping Detected</span>
+                  </div>
+                )}
+                {localMetrics.status === "phone" && (
+                  <div className="absolute inset-0 bg-red-950/75 z-10 flex flex-col items-center justify-center gap-1.5 border border-red-500 animate-pulse">
+                    <span className="text-2xl">📱</span>
+                    <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">Phone Usage Detected</span>
+                  </div>
+                )}
+
+                <div className="absolute inset-0 z-0">
                   <StudentCamera
                     sessionCode={sessionCode}
                     studentId={studentId}
@@ -1593,7 +1614,14 @@ export default function LiveClassroomPage() {
                 </div>
                 {/* Focus score badge — visible to all */}
                 <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-[#0a0a0f]/80 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-mono text-white/80 z-10 gap-1.5">
-                  <div className={`w-1.5 h-1.5 rounded-full ${localMetrics.status === "focused" ? "bg-emerald-500" : localMetrics.status === "distracted" ? "bg-amber-500" : localMetrics.status === "away" ? "bg-rose-500" : "bg-gray-500"}`} />
+                  <div className={`w-1.5 h-1.5 rounded-full ${
+                    localMetrics.status === "focused" || localMetrics.status === "active" ? "bg-emerald-500" : 
+                    localMetrics.status === "distracted" ? "bg-amber-500" : 
+                    localMetrics.status === "away" ? "bg-rose-500" : 
+                    localMetrics.status === "sleeping" ? "bg-cyan-400 animate-pulse" : 
+                    localMetrics.status === "phone" ? "bg-red-500 animate-ping" : 
+                    "bg-gray-500"
+                  }`} />
                   {localMetrics.score}%
                 </div>
                 <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-medium text-white shadow-black drop-shadow-md z-10">
@@ -1607,13 +1635,29 @@ export default function LiveClassroomPage() {
                 const status = student.status ?? student.state ?? "offline";
 
                 const ringColor = 
-                  status === "focused" ? "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" :
+                  status === "focused" || status === "active" ? "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" :
                   status === "distracted" ? "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.35)]" :
                   status === "away" ? "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]" :
+                  status === "sleeping" ? "border-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)]" :
+                  status === "phone" ? "border-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse" :
                   "border-gray-600";
                 
                 return (
                   <div key={student.id} className={`w-48 md:w-64 lg:w-72 shrink-0 snap-center relative aspect-video rounded-xl border ${ringColor} bg-[#14141b] flex flex-col items-center justify-center transition-all duration-500 overflow-hidden`}>
+                    {/* Visual Alert Overlays */}
+                    {status === "sleeping" && (
+                      <div className="absolute inset-0 bg-black/75 z-10 flex flex-col items-center justify-center gap-1.5">
+                        <span className="text-2xl">😴</span>
+                        <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">Sleeping Detected</span>
+                      </div>
+                    )}
+                    {status === "phone" && (
+                      <div className="absolute inset-0 bg-red-950/75 z-10 flex flex-col items-center justify-center gap-1.5 border border-red-500 animate-pulse">
+                        <span className="text-2xl">📱</span>
+                        <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">Phone Usage Detected</span>
+                      </div>
+                    )}
+
                     {remoteStreams[student.id] ? (
                       <video 
                         autoPlay 
@@ -1635,7 +1679,14 @@ export default function LiveClassroomPage() {
                       {student.name || "Student"}
                     </span>
                     <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-[#0a0a0f]/80 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-mono text-white/80 z-10 gap-1.5">
-                      <div className={`w-1.5 h-1.5 rounded-full ${status === "focused" ? "bg-emerald-500" : status === "distracted" ? "bg-amber-500" : status === "away" ? "bg-rose-500" : "bg-gray-500"}`} />
+                      <div className={`w-1.5 h-1.5 rounded-full ${
+                        status === "focused" || status === "active" ? "bg-emerald-500" : 
+                        status === "distracted" ? "bg-amber-500" : 
+                        status === "away" ? "bg-rose-500" : 
+                        status === "sleeping" ? "bg-cyan-400 animate-pulse" : 
+                        status === "phone" ? "bg-red-500 animate-ping" : 
+                        "bg-gray-500"
+                      }`} />
                       {score}%
                     </div>
                   </div>
@@ -2180,7 +2231,12 @@ export default function LiveClassroomPage() {
                       </div>
                       {/* focus dot status */}
                       <span className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border border-[#0E0E10] z-20 ${
-                        s.status === "active" ? "bg-emerald-500" : s.status === "idle" ? "bg-amber-500" : s.status === "distracted" ? "bg-rose-500" : "bg-gray-500"
+                        s.status === "active" || s.status === "focused" ? "bg-emerald-500" : 
+                        s.status === "idle" || s.status === "distracted" ? "bg-amber-500" : 
+                        s.status === "away" ? "bg-rose-500" : 
+                        s.status === "sleeping" ? "bg-cyan-500 animate-pulse" : 
+                        s.status === "phone" ? "bg-red-500 animate-ping" : 
+                        "bg-gray-500"
                       }`} />
                     </div>
 
@@ -2191,9 +2247,15 @@ export default function LiveClassroomPage() {
                         {s.id === studentId && (
                           <span className="text-[8px] bg-purple-500/25 px-1 py-0.2 rounded font-black text-purple-300">YOU</span>
                         )}
+                        {s.status === "sleeping" && (
+                          <span className="text-[8px] bg-cyan-950 border border-cyan-800 text-cyan-400 px-1 py-0.2 rounded font-bold animate-pulse">😴 SLEEPING</span>
+                        )}
+                        {s.status === "phone" && (
+                          <span className="text-[8px] bg-red-950 border border-red-800 text-red-400 px-1 py-0.2 rounded font-bold animate-pulse">📱 USING PHONE</span>
+                        )}
                       </span>
                       <span className="text-[10px] text-white/30 truncate uppercase tracking-wider font-semibold">
-                        {s.status} • {s.engagementScore}%
+                        {s.status === "phone" ? "USING PHONE" : s.status === "sleeping" ? "SLEEPING" : s.status} • {s.engagementScore}%
                       </span>
                     </div>
                   </div>

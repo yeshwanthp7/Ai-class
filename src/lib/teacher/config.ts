@@ -42,9 +42,22 @@ Only generate quizzes, assignments, revision notes, summaries, or practice quest
     advanced: `Provide deep, highly technical insights. Skip introductory definitions, use advanced terminology, and reference industry-standard design patterns, architectures, or papers directly.`,
   };
 
+  // Adapt subject if it defaults to Mathematics but the topic is clearly scientific
+  let currentSubject = context.subject || "General Academic";
+  const topicText = `${context.topic || ""} ${context.sessionId || ""} ${context.module || ""}`.toLowerCase();
+  const scienceKeywords = [
+    "physics", "gravity", "relativity", "quantum", "optics", "thermodynamics", 
+    "mechanics", "astronomy", "force", "motion", "velocity", "acceleration", 
+    "friction", "chemistry", "biology", "science", "cell", "atom", "molecule",
+    "electric", "magnetic", "wave", "light", "energy", "circuit"
+  ];
+  if (currentSubject === "Mathematics" && scienceKeywords.some(kw => topicText.includes(kw))) {
+    currentSubject = "Science (Physics / Chemistry / Biology)";
+  }
+
   const contextDetails = `
 [CLASSROOM CONTEXT]
-Subject: ${context.subject}
+Subject: ${currentSubject}
 Module: ${context.module}
 Topic: ${context.topic}
 Lesson Goal: ${context.lessonGoal}
@@ -53,7 +66,7 @@ Current Progress: ${context.currentProgress}
 Previous Topics: ${context.previousTopics?.join(", ") || "None"}
 ${transcript ? `\n[RECENT LECTURE TRANSCRIPT]\n${transcript}\n` : ""}
 
-CRITICAL REQUIREMENT: You must NEVER generate lessons outside the selected Subject, Module, and Topic. The lecture must remain strictly within ${context.subject}.
+CRITICAL REQUIREMENT: You must NEVER generate lessons outside the selected Subject, Module, and Topic. The lecture must remain strictly within ${currentSubject}.
 `;
 
   return `${basePrompt}\n${contextDetails}\n[STUDENT LEVEL: ${level.toUpperCase()}]\nInstruction for this level: ${levelInstructions[level]}

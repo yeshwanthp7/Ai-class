@@ -36,8 +36,7 @@ export default function CreateSessionPage() {
   const [step, setStep] = useState(1) // 1: Mode, 2: Info, 3: Content, 4: Launch
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // Step 1 State: Teaching Mode Selection
-  const [teachingMode, setTeachingMode] = useState<"AI" | "Human" | null>(null)
+  const [teachingMode, setTeachingMode] = useState<"AI" | "Human" | null>("AI")
 
   // Step 2 State: Session Info
   const [sessionTitle, setSessionTitle] = useState("")
@@ -402,19 +401,15 @@ export default function CreateSessionPage() {
                   <p className="text-[10px] text-white/30">Choose how the lecture will be delivered</p>
                 </div>
 
-                <div className="grid gap-6 md:grid-cols-2">
+                <div className="max-w-md mx-auto">
                   {/* Card 1: AI Teacher */}
                   <div
                     onClick={() => setTeachingMode("AI")}
-                    className={`group relative overflow-hidden rounded-2xl bg-[#111111] border p-6 cursor-pointer transition-all flex flex-col gap-4 hover:border-purple-500/50 ${
-                      teachingMode === "AI"
-                        ? "border-purple-500 shadow-[0_0_20px_rgba(147,51,234,0.3)] bg-purple-500/[0.02]"
-                        : "border-white/5"
-                    }`}
+                    className={`group relative overflow-hidden rounded-2xl bg-[#111111] border p-6 transition-all flex flex-col gap-4 border-purple-500 shadow-[0_0_20px_rgba(147,51,234,0.3)] bg-purple-500/[0.02]`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
-                        <Sparkles className="h-5 w-5" />
+                      <div className="h-10 w-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400">
+                        <Sparkles className="h-5 w-5 animate-pulse" />
                       </div>
                       <div>
                         <h3 className="text-sm font-bold text-white">AI Teacher</h3>
@@ -434,41 +429,6 @@ export default function CreateSessionPage() {
                       </li>
                       <li className="flex items-center gap-2">
                         <span className="text-purple-400 font-bold">✓</span> Answers student doubts instantly
-                      </li>
-                    </ul>
-                  </div>
-
-                  {/* Card 2: I'll Teach */}
-                  <div
-                    onClick={() => setTeachingMode("Human")}
-                    className={`group relative overflow-hidden rounded-2xl bg-[#111111] border p-6 cursor-pointer transition-all flex flex-col gap-4 hover:border-purple-500/50 ${
-                      teachingMode === "Human"
-                        ? "border-purple-500 shadow-[0_0_20px_rgba(147,51,234,0.3)] bg-purple-500/[0.02]"
-                        : "border-white/5"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
-                        <UserIcon className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-bold text-white">I'll Teach</h3>
-                        <p className="text-[10px] text-white/40">Lead the class yourself</p>
-                      </div>
-                    </div>
-
-                    <ul className="space-y-2.5 text-xs text-white/70 mt-2">
-                      <li className="flex items-center gap-2">
-                        <span className="text-purple-400 font-bold">✓</span> You lead via mic & camera
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <span className="text-purple-400 font-bold">✓</span> AI generates visuals as you speak
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <span className="text-purple-400 font-bold">✓</span> AI handles student doubt chat
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <span className="text-purple-400 font-bold">✓</span> Screen sharing available
                       </li>
                     </ul>
                   </div>

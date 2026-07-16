@@ -10,11 +10,11 @@ import { Hand, AlertTriangle, Lock, Eye, EyeOff, Brain, ScanEye } from "lucide-r
 const CAMERA_WIDTH = 640;
 const CAMERA_HEIGHT = 480;
 
-/** Warning escalation timings (ms) — stricter than before */
-const WARNING_1_DELAY = 5_000;   // was 10s → now 5s
-const WARNING_2_DELAY = 12_000;  // was 20s → now 12s
-const WARNING_3_DELAY = 20_000;  // was 30s → now 20s
-const AUTO_KICK_DELAY = 45_000;  // was 60s → now 45s
+/** Warning escalation timings (ms) — relaxed for better user experience */
+const WARNING_1_DELAY = 15_000;   // 15s
+const WARNING_2_DELAY = 30_000;  // 30s
+const WARNING_3_DELAY = 45_000;  // 45s
+const AUTO_KICK_DELAY = 90_000;  // 90s
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -173,8 +173,8 @@ export default function StudentCamera({
       return;
     }
 
-    // Start 5-second countdown to auto-kick if not in frame
-    setOutOfFrameSecondsLeft(5);
+    // Start 30-second countdown to auto-kick if not in frame
+    setOutOfFrameSecondsLeft(30);
 
     outOfFrameIntervalRef.current = setInterval(() => {
       setOutOfFrameSecondsLeft(prev => {
@@ -187,7 +187,7 @@ export default function StudentCamera({
       const storedName = typeof window !== "undefined" ? localStorage.getItem("studentName") || "Unknown" : "Unknown";
       await kickStudent(sessionCode, studentId, storedName);
       window.location.href = `/session/${sessionCode}/summary?kicked=true&reason=out_of_frame`;
-    }, 5000);
+    }, 30000);
 
     return clearOutOfFrameTimers;
   }, [metrics.faceDetected, enabled, active, sessionCode]);

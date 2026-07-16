@@ -16,8 +16,8 @@ export class DoubtChatModule implements AIModule {
     const { question, sessionId, studentId, level, state } = payload;
     
     // Log anonymous analytics
-    if (sessionId && studentId && state?.topic?.title) {
-      doubtAnalytics.logDoubt(sessionId, state.topic.title, studentId);
+    if (sessionId && studentId && state?.topic) {
+      doubtAnalytics.logDoubt(sessionId, state.topic, studentId);
     }
 
     const modifiedQuestion = question + DOUBT_INSTRUCTION;

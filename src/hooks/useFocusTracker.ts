@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 // ─── Public Types ───────────────────────────────────────────────────────────
 export interface FocusMetrics {
   score: number;
-  status: "focused" | "distracted" | "away" | "offline";
+  status: "focused" | "distracted" | "away" | "offline" | "sleeping" | "phone";
   gazeDirection: "center" | "left" | "right" | "up" | "down" | "unknown";
   faceDetected: boolean;
   eyesOpen: boolean;
@@ -103,7 +103,7 @@ const CAPTURE_WIDTH = 640;
 const CAPTURE_HEIGHT = 480;
 
 /** Eye Aspect Ratio thresholds */
-const EAR_CLOSED_THRESHOLD = 0.20;
+const EAR_CLOSED_THRESHOLD = 0.15;
 /** Duration (ms) below which a closure is just a natural blink */
 const BLINK_MAX_DURATION_MS = 350;
 /** If blinks/minute exceed this, student is fatigued */
@@ -562,8 +562,8 @@ export function useFocusTracker({ videoRef, onFocusUpdate, enabled = true }: Use
           // ── No face detected ──────────────────────────────────────────
           if (!results.multiFaceLandmarks?.length) {
             consecutiveMissedFacesRef.current += 1;
-            // Frame-level debounce to prevent flicker on temporary camera glitches.
-            if (consecutiveMissedFacesRef.current < 5) {
+            // Frame-level debounce to prevent flicker on temporary camera glitches (approx 2s at 30fps).
+            if (consecutiveMissedFacesRef.current < 60) {
               return;
             }
 
@@ -604,12 +604,6 @@ export function useFocusTracker({ videoRef, onFocusUpdate, enabled = true }: Use
             CHIN,
             LEFT_CHEEK,
             RIGHT_CHEEK,
-            LEFT_EYE_TOP,
-            LEFT_EYE_BOTTOM,
-            RIGHT_EYE_TOP,
-            RIGHT_EYE_BOTTOM,
-            LEFT_IRIS_CENTER,
-            RIGHT_IRIS_CENTER
           ];
 
           let faceFullyInFrame = true;
@@ -623,7 +617,8 @@ export function useFocusTracker({ videoRef, onFocusUpdate, enabled = true }: Use
 
           if (!faceFullyInFrame) {
             consecutiveMissedFacesRef.current += 1;
-            if (consecutiveMissedFacesRef.current < 5) {
+            // Frame-level debounce to prevent flicker on temporary camera glitches (approx 2s at 30fps).
+            if (consecutiveMissedFacesRef.current < 60) {
               return;
             }
 
@@ -763,8 +758,17 @@ export function useFocusTracker({ videoRef, onFocusUpdate, enabled = true }: Use
 
           // ── Status classification ─────────────────────────────────────
           let status: FocusMetrics["status"] = "focused";
-          if (smoothed < STATUS_DISTRACTED_MIN) status = "away";
-          else if (smoothed < STATUS_FOCUSED_MIN) status = "distracted";
+          if (phoneDetected) {
+            status = "phone";
+            smoothed = Math.max(0, smoothed - 40);
+          } else if (isDrowsy && eyeClosedSinceRef.current !== null && (now - eyeClosedSinceRef.current > 3000)) {
+            status = "sleeping";
+            smoothed = Math.max(0, smoothed - 50);
+          } else if (smoothed < STATUS_DISTRACTED_MIN) {
+            status = "away";
+          } else if (smoothed < STATUS_FOCUSED_MIN) {
+            status = "distracted";
+          }
 
           // ── Build metrics ─────────────────────────────────────────────
           const m: FocusMetrics = {
