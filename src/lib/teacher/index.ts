@@ -157,47 +157,51 @@ function getMockTeacherResponse(question: string, topic?: string, level: string 
   const currentTopic = topic || "this topic";
   const questionLower = question.toLowerCase();
   
-  // Check if it is a PDF page explanation
+  // 1. Check if it is a PDF page explanation
   const pdfPrefix = "Please explain this page of the document:";
   if (question.startsWith(pdfPrefix)) {
     const docContent = question.slice(pdfPrefix.length).trim();
-    if (docContent.length > 10) {
-      const rawSentences = docContent.split(/[.!?]/);
+    if (docContent.length > 5) {
+      const rawSentences = docContent.split(/[.!?\n\r]/);
       const sentences = rawSentences
         .map(s => s.trim())
-        .filter(s => s.length > 15 && !s.toLowerCase().includes("page"));
+        .filter(s => s.length > 8 && s.toLowerCase().indexOf("page") === -1 && s.toLowerCase().indexOf("chapter") === -1);
       
       if (sentences.length > 0) {
-        let speech = `Looking at this page of the document, the core point presented is that ${sentences[0]}. `;
+        let speech = `Reading through this section of the document, the primary focus is that ${sentences[0]}. `;
         if (sentences[1]) {
-          speech += `To expand on this, the text highlights that ${sentences[1]}. `;
+          speech += `We also see it discuss that ${sentences[1]}. `;
         }
         if (sentences[2]) {
-          speech += `We should also note the section stating that ${sentences[2]}. `;
+          speech += `In addition, it emphasizes that ${sentences[2]}. `;
         }
         if (sentences[3]) {
-          speech += `Furthermore, it mentions that ${sentences[3]}. `;
+          speech += `Lastly, it highlights that ${sentences[3]}. `;
         }
-        speech += `This provides us with a clear overview of the concepts on this page. Let's proceed with these details.`;
+        speech += `This summarizes the main points of this document page.`;
         return speech;
       }
     }
   }
 
-  if (questionLower.includes("hello") || questionLower.includes("hi")) {
+  // 2. Handle greetings using word boundaries
+  const hasGreeting = /\b(hello|hi|hey|greetings|welcome)\b/i.test(questionLower);
+  if (hasGreeting) {
     return `Hello class! Welcome to today's lecture. Let's make sure we are focused and ready to dive into ${currentTopic}. If you have questions as we go, just ask.`;
   }
   
-  if (questionLower.includes("doubt") || questionLower.includes("explain") || questionLower.includes("what is") || questionLower.includes("why")) {
+  // 3. Handle doubts using word boundaries
+  const hasDoubt = /\b(doubt|explain|what|why|how|question|clarify)\b/i.test(questionLower);
+  if (hasDoubt) {
     let concept = currentTopic;
     const match = question.match(/(?:explain|what is|why is|about)\s+([^?.]{3,40})/i);
     if (match && match[1]) {
       concept = match[1].trim();
     }
-    return `That is an excellent question about ${concept}. Let's break this down. First, the core concept relies on structuring our information. Secondly, we examine how it interacts with other modules. Lastly, we apply it to practical scenarios to optimize performance. Does this explanation help clarify things for you?`;
+    return `That is a great question about ${concept}. Let's break this down. First, the core concept relies on structuring our information. Secondly, we examine how it interacts with other modules. Lastly, we apply it to practical scenarios to optimize performance. Does this explanation help clarify things for you?`;
   }
   
-  // Default lecture speech
+  // 4. Default lecture speech
   return `Now, let's explore ${currentTopic} in more depth. To understand this properly, think of it like building a house. First, you need a strong foundation of basic rules and parameters. Secondly, you add the structural components which define the core logic. Finally, you decorate it with custom styles and animations. Throughout this process, keeping our design clean and efficient is key. Let's look at the slides to visualize this concept.`;
 }
 
