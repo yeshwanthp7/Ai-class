@@ -1615,7 +1615,7 @@ export default function LiveClassroomPage() {
                 {/* Focus score badge — visible to all */}
                 <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-[#0a0a0f]/80 backdrop-blur-md border border-white/10 flex items-center justify-center text-[10px] font-mono text-white/80 z-10 gap-1.5">
                   <div className={`w-1.5 h-1.5 rounded-full ${
-                    localMetrics.status === "focused" || localMetrics.status === "active" ? "bg-emerald-500" : 
+                    localMetrics.status === "focused"  ? "bg-emerald-500" : 
                     localMetrics.status === "distracted" ? "bg-amber-500" : 
                     localMetrics.status === "away" ? "bg-rose-500" : 
                     localMetrics.status === "sleeping" ? "bg-cyan-400 animate-pulse" : 
