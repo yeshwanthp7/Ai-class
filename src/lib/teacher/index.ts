@@ -157,12 +157,44 @@ function getMockTeacherResponse(question: string, topic?: string, level: string 
   const currentTopic = topic || "this topic";
   const questionLower = question.toLowerCase();
   
+  // Check if it is a PDF page explanation
+  const pdfPrefix = "Please explain this page of the document:";
+  if (question.startsWith(pdfPrefix)) {
+    const docContent = question.slice(pdfPrefix.length).trim();
+    if (docContent.length > 10) {
+      const rawSentences = docContent.split(/[.!?]/);
+      const sentences = rawSentences
+        .map(s => s.trim())
+        .filter(s => s.length > 15 && !s.toLowerCase().includes("page"));
+      
+      if (sentences.length > 0) {
+        let speech = `Looking at this page of the document, the core point presented is that ${sentences[0]}. `;
+        if (sentences[1]) {
+          speech += `To expand on this, the text highlights that ${sentences[1]}. `;
+        }
+        if (sentences[2]) {
+          speech += `We should also note the section stating that ${sentences[2]}. `;
+        }
+        if (sentences[3]) {
+          speech += `Furthermore, it mentions that ${sentences[3]}. `;
+        }
+        speech += `This provides us with a clear overview of the concepts on this page. Let's proceed with these details.`;
+        return speech;
+      }
+    }
+  }
+
   if (questionLower.includes("hello") || questionLower.includes("hi")) {
     return `Hello class! Welcome to today's lecture. Let's make sure we are focused and ready to dive into ${currentTopic}. If you have questions as we go, just ask.`;
   }
   
   if (questionLower.includes("doubt") || questionLower.includes("explain") || questionLower.includes("what is") || questionLower.includes("why")) {
-    return `That is an excellent question. When we think about the concept, we have to understand the fundamental principles. Let's break this down. First, the core concept relies on structuring our information. Secondly, we examine how it interacts with other modules. Lastly, we apply it to practical scenarios to optimize performance. Does this explanation help clarify things for you?`;
+    let concept = currentTopic;
+    const match = question.match(/(?:explain|what is|why is|about)\s+([^?.]{3,40})/i);
+    if (match && match[1]) {
+      concept = match[1].trim();
+    }
+    return `That is an excellent question about ${concept}. Let's break this down. First, the core concept relies on structuring our information. Secondly, we examine how it interacts with other modules. Lastly, we apply it to practical scenarios to optimize performance. Does this explanation help clarify things for you?`;
   }
   
   // Default lecture speech
