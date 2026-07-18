@@ -2,17 +2,29 @@ import { TeacherConfig } from "./types";
 import { classroomContext } from "../classroom-context";
 
 export const getTeacherConfig = (): TeacherConfig => {
-  const apiKey = process.env.NVIDIA_API_KEY || "";
-  const model = process.env.NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
+  const groqKey = process.env.GROQ_API_KEY || "";
+  const nvidiaKey = process.env.NVIDIA_API_KEY || "";
+  
+  let apiKey = "";
+  let baseUrl = "";
+  let model = "";
+  
+  if (groqKey) {
+    apiKey = groqKey;
+    baseUrl = "https://api.groq.com/openai/v1";
+    model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  } else {
+    apiKey = nvidiaKey;
+    baseUrl = "https://integrate.api.nvidia.com/v1";
+    model = process.env.NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
+  }
   
   // Safe parsing of numeric values
-  const rawTemp = process.env.NVIDIA_TEMPERATURE;
+  const rawTemp = process.env.NVIDIA_TEMPERATURE || process.env.GROQ_TEMPERATURE;
   const temperature = rawTemp ? parseFloat(rawTemp) : 0.2;
   
-  const rawMaxTokens = process.env.NVIDIA_MAX_TOKENS;
+  const rawMaxTokens = process.env.NVIDIA_MAX_TOKENS || process.env.GROQ_MAX_TOKENS;
   const maxTokens = rawMaxTokens ? parseInt(rawMaxTokens, 10) : 384;
-
-  const baseUrl = "https://integrate.api.nvidia.com/v1";
 
   return {
     apiKey,
