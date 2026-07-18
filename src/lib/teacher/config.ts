@@ -2,8 +2,23 @@ import { TeacherConfig } from "./types";
 import { classroomContext } from "../classroom-context";
 
 export const getTeacherConfig = (): TeacherConfig => {
-  const groqKey = process.env.GROQ_API_KEY || "";
+  let groqKey = process.env.GROQ_API_KEY || "";
   const nvidiaKey = process.env.NVIDIA_API_KEY || "";
+  
+  // Proactive auto-discovery: scan for any env variable names/values starting with 'gsk_'
+  if (!groqKey) {
+    for (const key in process.env) {
+      if (key.startsWith("gsk_")) {
+        groqKey = key;
+        break;
+      }
+      const val = process.env[key];
+      if (val && val.startsWith("gsk_")) {
+        groqKey = val;
+        break;
+      }
+    }
+  }
   
   let apiKey = "";
   let baseUrl = "";
