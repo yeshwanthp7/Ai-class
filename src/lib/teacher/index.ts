@@ -51,99 +51,106 @@ export async function askTeacher(question: string, options?: TeacherOptions): Pr
     return createMockStream(mockResponseText);
   }
 
-  // Retrieve session history
-  let history: Message[] = [];
-  if (!options?.skipMemory) {
-    history = await defaultMemoryStore.getHistory(sessionKey);
+  try {
+    // Retrieve session history
+    let history: Message[] = [];
+    if (!options?.skipMemory) {
+      history = await defaultMemoryStore.getHistory(sessionKey);
 
-    // Append user's new question
-    const userMessage: Message = { role: "user", content: sanitizedQuestion };
-    await defaultMemoryStore.addMessage(sessionKey, userMessage);
-    history = await defaultMemoryStore.getHistory(sessionKey); // reload updated history
-  }
+      // Append user's new question
+      const userMessage: Message = { role: "user", content: sanitizedQuestion };
+      await defaultMemoryStore.addMessage(sessionKey, userMessage);
+      history = await defaultMemoryStore.getHistory(sessionKey); // reload updated history
+    }
 
-  // Dynamically generate the latest system prompt
-  const systemPrompt = getSystemPrompt(level, options?.state, options?.transcript);
-  
-  // Prepend system prompt to the API request payload
-  const apiMessages = [
-    { role: "system", content: systemPrompt },
-    ...history.map(msg => ({ role: msg.role, content: msg.content }))
-  ];
-
-  const postData = JSON.stringify({
-    model: config.model,
-    messages: apiMessages,
-    temperature: config.temperature,
-    top_p: 0.7,
-    max_tokens: config.maxTokens,
-    stream: true,
-  });
-
-  console.log(`[teacher] Sending stream request to model '${config.model}' via fetch API...`);
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: postData,
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error(`[teacher] NVIDIA API error ${response.status}: ${errText}`);
-    throw new Error(`NVIDIA API error ${response.status}: ${errText}`);
-  }
-
-  const stream = response.body;
-  if (!stream) {
-    throw new Error("No response stream returned from NVIDIA API");
-  }
-
-  // If memory is not skipped, we read the stream in the background to save the assistant's answer
-  if (!options?.skipMemory) {
-    const [clientStream, memoryStream] = stream.tee();
+    // Dynamically generate the latest system prompt
+    const systemPrompt = getSystemPrompt(level, options?.state, options?.transcript);
     
-    (async () => {
-      try {
-        const reader = memoryStream.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let fullText = "";
-        
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
+    // Prepend system prompt to the API request payload
+    const apiMessages = [
+      { role: "system", content: systemPrompt },
+      ...history.map(msg => ({ role: msg.role, content: msg.content }))
+    ];
+
+    const postData = JSON.stringify({
+      model: config.model,
+      messages: apiMessages,
+      temperature: config.temperature,
+      top_p: 0.7,
+      max_tokens: config.maxTokens,
+      stream: true,
+    });
+
+    console.log(`[teacher] Sending stream request to model '${config.model}' via fetch API...`);
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: postData,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[teacher] NVIDIA API error ${response.status}: ${errText}`);
+      throw new Error(`NVIDIA API error ${response.status}: ${errText}`);
+    }
+
+    const stream = response.body;
+    if (!stream) {
+      throw new Error("No response stream returned from NVIDIA API");
+    }
+
+    // If memory is not skipped, we read the stream in the background to save the assistant's answer
+    if (!options?.skipMemory) {
+      const [clientStream, memoryStream] = stream.tee();
+      
+      (async () => {
+        try {
+          const reader = memoryStream.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let fullText = "";
           
-          for (const line of lines) {
-            if (line.startsWith("data: ") && !line.includes("[DONE]")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.choices?.[0]?.delta?.content) {
-                  fullText += data.choices[0].delta.content;
-                }
-              } catch {}
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            
+            for (const line of lines) {
+              if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.choices?.[0]?.delta?.content) {
+                    fullText += data.choices[0].delta.content;
+                  }
+                } catch {}
+              }
             }
           }
+          
+          if (fullText) {
+            const assistantMessage: Message = { role: "assistant", content: fullText };
+            await defaultMemoryStore.addMessage(sessionKey, assistantMessage);
+          }
+        } catch (err) {
+          console.error("[teacher] Error parsing background memory stream:", err);
         }
-        
-        if (fullText) {
-          const assistantMessage: Message = { role: "assistant", content: fullText };
-          await defaultMemoryStore.addMessage(sessionKey, assistantMessage);
-        }
-      } catch (err) {
-        console.error("[teacher] Error parsing background memory stream:", err);
-      }
-    })();
+      })();
 
-    return clientStream;
+      return clientStream;
+    }
+
+    return stream;
+  } catch (err) {
+    console.warn("[teacher] NVIDIA API call failed. Falling back to Mock Stream. Error:", err);
+    const topic = options?.state?.topic || "artificial intelligence";
+    const mockResponseText = getMockTeacherResponse(sanitizedQuestion, topic, level);
+    return createMockStream(mockResponseText);
   }
-
-  return stream;
 }
 
 function getMockTeacherResponse(question: string, topic?: string, level: string = "intermediate"): string {
