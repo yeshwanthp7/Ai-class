@@ -157,15 +157,17 @@ function getMockTeacherResponse(question: string, topic?: string, level: string 
   const currentTopic = topic || "this topic";
   const questionLower = question.toLowerCase();
   
-  // 1. Check if it is a PDF page explanation
-  const pdfPrefix = "Please explain this page of the document:";
-  if (question.startsWith(pdfPrefix)) {
-    const docContent = question.slice(pdfPrefix.length).trim();
+  // 1. Check if it is a PDF page explanation (looks for explain document keyword anywhere in query)
+  const isPdfExplanation = questionLower.includes("explain this page of the document") || questionLower.includes("page of the document");
+  if (isPdfExplanation) {
+    const colonIndex = question.indexOf(":");
+    const docContent = colonIndex > -1 ? question.slice(colonIndex + 1).trim() : question;
+    
     if (docContent.length > 5) {
       const rawSentences = docContent.split(/[.!?\n\r]/);
       const sentences = rawSentences
         .map(s => s.trim())
-        .filter(s => s.length > 8 && s.toLowerCase().indexOf("page") === -1 && s.toLowerCase().indexOf("chapter") === -1);
+        .filter(s => s.length > 8); // removed "page" filtering so page sentences aren't discarded
       
       if (sentences.length > 0) {
         let speech = `Reading through this section of the document, the primary focus is that ${sentences[0]}. `;
