@@ -10,8 +10,9 @@ import {
   where,
   serverTimestamp,
   Timestamp,
+  deleteDoc,
 } from "firebase/firestore"
-import { db } from "./firebase"
+import { db, isFirebaseConfigured } from "./firebase"
 
 export interface Session {
   id: string
@@ -92,6 +93,40 @@ export const createSession = async (
     } | null
   }
 ): Promise<string> => {
+  if (!isFirebaseConfigured) {
+    const sessionData: Session = {
+      id: code,
+      code,
+      title,
+      subject,
+      gradeLevel,
+      duration,
+      type,
+      topics,
+      currentTopicIndex: 0,
+      status: scheduledDate ? "Scheduled" : "Live",
+      teacherId,
+      createdAt: new Date().toISOString(),
+      focusMode: false,
+      allowLateJoins: true,
+      muteOnEntry: true,
+      countdownEndsAt: scheduledDate 
+        ? new Date(scheduledDate).toISOString() 
+        : new Date(Date.now() + 120 * 1000).toISOString(),
+      ...extraSettings,
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem(`mock_session_${code}`, JSON.stringify(sessionData))
+      const savedCodesStr = localStorage.getItem(`mock_sessions_${teacherId}`) || "[]"
+      const savedCodes = JSON.parse(savedCodesStr)
+      if (!savedCodes.includes(code)) {
+        savedCodes.push(code)
+        localStorage.setItem(`mock_sessions_${teacherId}`, JSON.stringify(savedCodes))
+      }
+    }
+    return code
+  }
+
   try {
     const sessionRef = doc(db, "sessions", code)
     
@@ -145,6 +180,18 @@ export const updateSessionControls = async (
     muteOnEntry?: boolean
   }
 ): Promise<void> => {
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const code = sessionCode.trim().toUpperCase()
+      const dataStr = localStorage.getItem(`mock_session_${code}`)
+      if (dataStr) {
+        const data = JSON.parse(dataStr)
+        localStorage.setItem(`mock_session_${code}`, JSON.stringify({ ...data, ...controls }))
+      }
+    }
+    return
+  }
+
   try {
     const sessionRef = doc(db, "sessions", sessionCode.trim().toUpperCase())
     await updateDoc(sessionRef, controls)
@@ -156,6 +203,22 @@ export const updateSessionControls = async (
 
 // 1.2 Start class early (force transition)
 export const startClassEarly = async (sessionCode: string): Promise<void> => {
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const code = sessionCode.trim().toUpperCase()
+      const dataStr = localStorage.getItem(`mock_session_${code}`)
+      if (dataStr) {
+        const data = JSON.parse(dataStr)
+        localStorage.setItem(`mock_session_${code}`, JSON.stringify({ 
+          ...data, 
+          status: "Active",
+          countdownEndsAt: new Date().toISOString()
+        }))
+      }
+    }
+    return
+  }
+
   try {
     const sessionRef = doc(db, "sessions", sessionCode.trim().toUpperCase())
     await updateDoc(sessionRef, {
@@ -173,8 +236,62 @@ export const joinSession = async (
   studentName: string,
   sessionCode: string
 ): Promise<string> => {
+  const formattedCode = sessionCode.trim().toUpperCase()
+
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      // Auto create a mock session if not exists so joining is always successful
+      const sessionStr = localStorage.getItem(`mock_session_${formattedCode}`)
+      if (!sessionStr) {
+        const mockSess: Session = {
+          id: formattedCode,
+          code: formattedCode,
+          title: "Introduction to Artificial Intelligence",
+          subject: "Computer Science",
+          gradeLevel: "University",
+          duration: "1h",
+          type: "Public",
+          topics: ["Neural Networks", "Deep Learning", "Natural Language Processing"],
+          currentTopicIndex: 0,
+          status: "Live",
+          teacherId: "mock-teacher-123",
+          createdAt: new Date().toISOString(),
+        }
+        localStorage.setItem(`mock_session_${formattedCode}`, JSON.stringify(mockSess))
+      }
+
+      // Check if student is kicked
+      const kickedStr = localStorage.getItem(`mock_session_kicked_${formattedCode}`) || "[]"
+      const kickedList = JSON.parse(kickedStr)
+      if (kickedList.some((s: any) => s.nameLower === studentName.trim().toLowerCase())) {
+        throw new Error("You have been kicked from this session and cannot rejoin.")
+      }
+
+      const nameLower = studentName.trim().toLowerCase()
+      const studentId = nameLower.replace(/\s+/g, "-") + "-" + Date.now().toString().slice(-4)
+      
+      const newStudent: Student = {
+        id: studentId,
+        name: studentName,
+        joinedAt: new Date().toISOString(),
+        lastActive: new Date().toISOString(),
+        status: "active",
+        engagementScore: 100,
+      }
+
+      // Add student
+      const studentsStr = localStorage.getItem(`mock_session_students_${formattedCode}`) || "[]"
+      const students = JSON.parse(studentsStr)
+      const filtered = students.filter((s: any) => s.id !== studentId)
+      filtered.push(newStudent)
+      localStorage.setItem(`mock_session_students_${formattedCode}`, JSON.stringify(filtered))
+
+      return studentId
+    }
+    return "mock-student-id"
+  }
+
   try {
-    const formattedCode = sessionCode.trim().toUpperCase()
     const sessionRef = doc(db, "sessions", formattedCode)
     const sessionSnap = await getDoc(sessionRef)
 
@@ -200,7 +317,6 @@ export const joinSession = async (
       const kickedSnap = await getDocs(kickedQuery)
       isKicked = !kickedSnap.empty
     } catch (e) {
-      // ponytail: Fallback to false if kicked rules aren't deployed in the Firebase Console
       console.warn("Failed to check blacklisted students (likely missing firestore.rules update):", e)
     }
 
@@ -250,7 +366,31 @@ export const subscribeToSession = (
   onUpdate: (session: Session | null) => void,
   onError?: (error: any) => void
 ) => {
-  const sessionRef = doc(db, "sessions", sessionCode.trim().toUpperCase())
+  const formattedCode = sessionCode.trim().toUpperCase()
+
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const checkSession = () => {
+        const sessionStr = localStorage.getItem(`mock_session_${formattedCode}`)
+        if (sessionStr) {
+          try {
+            onUpdate(JSON.parse(sessionStr))
+          } catch {
+            onUpdate(null)
+          }
+        } else {
+          onUpdate(null)
+        }
+      }
+      checkSession()
+      const interval = setInterval(checkSession, 1000)
+      return () => clearInterval(interval)
+    }
+    onUpdate(null)
+    return () => {}
+  }
+
+  const sessionRef = doc(db, "sessions", formattedCode)
   return onSnapshot(
     sessionRef,
     (docSnap) => {
@@ -273,7 +413,38 @@ export const subscribeToStudents = (
   onUpdate: (students: Student[]) => void,
   onError?: (error: any) => void
 ) => {
-  const studentsColRef = collection(db, "sessions", sessionCode.trim().toUpperCase(), "students")
+  const formattedCode = sessionCode.trim().toUpperCase()
+
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const checkStudents = () => {
+        const studentsStr = localStorage.getItem(`mock_session_students_${formattedCode}`) || "[]"
+        try {
+          const list = JSON.parse(studentsStr) as Student[]
+          // If empty and we are in waiting room or live room, populate a couple of mock students to make it active!
+          if (list.length === 0) {
+            const defaultMockStudents: Student[] = [
+              { id: "alice-1234", name: "Alice", joinedAt: new Date().toISOString(), lastActive: new Date().toISOString(), status: "active", engagementScore: 92 },
+              { id: "bob-5678", name: "Bob", joinedAt: new Date().toISOString(), lastActive: new Date().toISOString(), status: "distracted", engagementScore: 78 }
+            ]
+            localStorage.setItem(`mock_session_students_${formattedCode}`, JSON.stringify(defaultMockStudents))
+            onUpdate(defaultMockStudents)
+          } else {
+            onUpdate(list)
+          }
+        } catch {
+          onUpdate([])
+        }
+      }
+      checkStudents()
+      const interval = setInterval(checkStudents, 1500)
+      return () => clearInterval(interval)
+    }
+    onUpdate([])
+    return () => {}
+  }
+
+  const studentsColRef = collection(db, "sessions", formattedCode, "students")
   return onSnapshot(
     studentsColRef,
     (querySnap) => {
@@ -295,6 +466,18 @@ export const updateSessionTopic = async (
   sessionCode: string,
   topicIndex: number
 ): Promise<void> => {
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const code = sessionCode.trim().toUpperCase()
+      const dataStr = localStorage.getItem(`mock_session_${code}`)
+      if (dataStr) {
+        const data = JSON.parse(dataStr)
+        localStorage.setItem(`mock_session_${code}`, JSON.stringify({ ...data, currentTopicIndex: topicIndex }))
+      }
+    }
+    return
+  }
+
   try {
     const sessionRef = doc(db, "sessions", sessionCode.trim().toUpperCase())
     await updateDoc(sessionRef, {
@@ -313,6 +496,32 @@ export const updateStudentEngagement = async (
   score: number,
   status: "focused" | "distracted" | "away" | "offline" | "sleeping" | "phone"
 ): Promise<void> => {
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const code = sessionCode.trim().toUpperCase()
+      const studentsStr = localStorage.getItem(`mock_session_students_${code}`) || "[]"
+      const students = JSON.parse(studentsStr)
+      const index = students.findIndex((s: any) => s.id === studentId)
+      const mappedStatus = status === "focused" ? "active" : status
+      if (index > -1) {
+        students[index].engagementScore = score
+        students[index].status = mappedStatus
+        students[index].lastActive = new Date().toISOString()
+      } else {
+        students.push({
+          id: studentId,
+          name: studentId.split("-")[0],
+          engagementScore: score,
+          status: mappedStatus,
+          lastActive: new Date().toISOString(),
+          joinedAt: new Date().toISOString(),
+        })
+      }
+      localStorage.setItem(`mock_session_students_${code}`, JSON.stringify(students))
+    }
+    return
+  }
+
   try {
     const studentRef = doc(db, "sessions", sessionCode.trim().toUpperCase(), "students", studentId)
     await setDoc(studentRef, {
@@ -329,9 +538,18 @@ export const updateStudentEngagement = async (
 }
 
 // 6.5 Remove student explicitly when they leave
-import { deleteDoc } from "firebase/firestore";
-
 export const removeStudent = async (sessionCode: string, studentId: string): Promise<void> => {
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const code = sessionCode.trim().toUpperCase()
+      const studentsStr = localStorage.getItem(`mock_session_students_${code}`) || "[]"
+      const students = JSON.parse(studentsStr)
+      const filtered = students.filter((s: any) => s.id !== studentId)
+      localStorage.setItem(`mock_session_students_${code}`, JSON.stringify(filtered))
+    }
+    return
+  }
+
   try {
     const studentRef = doc(db, "sessions", sessionCode.trim().toUpperCase(), "students", studentId)
     await deleteDoc(studentRef);
@@ -342,6 +560,18 @@ export const removeStudent = async (sessionCode: string, studentId: string): Pro
 
 // 7. End session
 export const endSession = async (sessionCode: string): Promise<void> => {
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const code = sessionCode.trim().toUpperCase()
+      const dataStr = localStorage.getItem(`mock_session_${code}`)
+      if (dataStr) {
+        const data = JSON.parse(dataStr)
+        localStorage.setItem(`mock_session_${code}`, JSON.stringify({ ...data, status: "Completed" }))
+      }
+    }
+    return
+  }
+
   try {
     const sessionRef = doc(db, "sessions", sessionCode.trim().toUpperCase())
     await updateDoc(sessionRef, {
@@ -355,6 +585,11 @@ export const endSession = async (sessionCode: string): Promise<void> => {
 
 // 8. Sync classroom progress (Teacher to Students)
 export const syncClassroomProgress = async (sessionCode: string, currentTopicIndex: number): Promise<void> => {
+  if (!isFirebaseConfigured) {
+    await updateSessionTopic(sessionCode, currentTopicIndex)
+    return
+  }
+
   try {
     const sessionRef = doc(db, "sessions", sessionCode.trim().toUpperCase())
     await updateDoc(sessionRef, { currentTopicIndex })
@@ -369,8 +604,25 @@ export const kickStudent = async (
   studentId: string,
   studentName: string
 ): Promise<void> => {
+  const code = sessionCode.trim().toUpperCase()
+
+  if (!isFirebaseConfigured) {
+    await removeStudent(code, studentId)
+    if (typeof window !== "undefined") {
+      const kickedStr = localStorage.getItem(`mock_session_kicked_${code}`) || "[]"
+      const kicked = JSON.parse(kickedStr)
+      kicked.push({
+        id: studentId,
+        name: studentName,
+        nameLower: studentName.trim().toLowerCase(),
+        kickedAt: new Date().toISOString()
+      })
+      localStorage.setItem(`mock_session_kicked_${code}`, JSON.stringify(kicked))
+    }
+    return
+  }
+
   try {
-    const code = sessionCode.trim().toUpperCase()
     await removeStudent(code, studentId)
 
     const kickedRef = doc(db, "sessions", code, "kicked", studentId)
@@ -390,8 +642,18 @@ export const checkIsKicked = async (
   sessionCode: string,
   studentName: string
 ): Promise<boolean> => {
+  const code = sessionCode.trim().toUpperCase()
+
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const kickedStr = localStorage.getItem(`mock_session_kicked_${code}`) || "[]"
+      const kicked = JSON.parse(kickedStr)
+      return kicked.some((s: any) => s.nameLower === studentName.trim().toLowerCase())
+    }
+    return false
+  }
+
   try {
-    const code = sessionCode.trim().toUpperCase()
     const kickedColRef = collection(db, "sessions", code, "kicked")
     const q = query(kickedColRef, where("nameLower", "==", studentName.trim().toLowerCase()))
     const snap = await getDocs(q)
@@ -406,8 +668,18 @@ export const checkIsIdKicked = async (
   sessionCode: string,
   studentId: string
 ): Promise<boolean> => {
+  const code = sessionCode.trim().toUpperCase()
+
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const kickedStr = localStorage.getItem(`mock_session_kicked_${code}`) || "[]"
+      const kicked = JSON.parse(kickedStr)
+      return kicked.some((s: any) => s.id === studentId)
+    }
+    return false
+  }
+
   try {
-    const code = sessionCode.trim().toUpperCase()
     const docRef = doc(db, "sessions", code, "kicked", studentId)
     const snap = await getDoc(docRef)
     return snap.exists()
@@ -421,8 +693,18 @@ export const isStudentRegistered = async (
   sessionCode: string,
   studentId: string
 ): Promise<boolean> => {
+  const code = sessionCode.trim().toUpperCase()
+
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const studentsStr = localStorage.getItem(`mock_session_students_${code}`) || "[]"
+      const students = JSON.parse(studentsStr)
+      return students.some((s: any) => s.id === studentId)
+    }
+    return true
+  }
+
   try {
-    const code = sessionCode.trim().toUpperCase()
     const studentRef = doc(db, "sessions", code, "students", studentId)
     const snap = await getDoc(studentRef)
     return snap.exists()
@@ -436,6 +718,11 @@ export const setStudentOffline = async (
   sessionCode: string,
   studentId: string
 ): Promise<void> => {
+  if (!isFirebaseConfigured) {
+    await updateStudentEngagement(sessionCode, studentId, 0, "offline")
+    return
+  }
+
   try {
     const code = sessionCode.trim().toUpperCase()
     const studentRef = doc(db, "sessions", code, "students", studentId)
@@ -461,7 +748,27 @@ export const subscribeToKicked = (
   onUpdate: (kicked: KickedStudent[]) => void,
   onError?: (error: any) => void
 ) => {
-  const kickedColRef = collection(db, "sessions", sessionCode.trim().toUpperCase(), "kicked")
+  const formattedCode = sessionCode.trim().toUpperCase()
+
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const checkKicked = () => {
+        const kickedStr = localStorage.getItem(`mock_session_kicked_${formattedCode}`) || "[]"
+        try {
+          onUpdate(JSON.parse(kickedStr))
+        } catch {
+          onUpdate([])
+        }
+      }
+      checkKicked()
+      const interval = setInterval(checkKicked, 2000)
+      return () => clearInterval(interval)
+    }
+    onUpdate([])
+    return () => {}
+  }
+
+  const kickedColRef = collection(db, "sessions", formattedCode, "kicked")
   return onSnapshot(
     kickedColRef,
     (querySnap) => {
@@ -480,6 +787,35 @@ export const subscribeToKicked = (
 
 // 15. Fetch all sessions for a specific teacher with student counts
 export const getTeacherSessions = async (teacherId: string): Promise<Array<Session & { studentCount: number }>> => {
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const savedCodesStr = localStorage.getItem(`mock_sessions_${teacherId}`) || "[]"
+      const savedCodes = JSON.parse(savedCodesStr)
+      const list: Session[] = []
+      for (const code of savedCodes) {
+        const sessionStr = localStorage.getItem(`mock_session_${code}`)
+        if (sessionStr) {
+          try {
+            list.push(JSON.parse(sessionStr))
+          } catch {}
+        }
+      }
+      
+      const countsList = list.map((sess) => {
+        const studentsStr = localStorage.getItem(`mock_session_students_${sess.code}`) || "[]"
+        const kickedStr = localStorage.getItem(`mock_session_kicked_${sess.code}`) || "[]"
+        const studentCount = (JSON.parse(studentsStr) || []).length + (JSON.parse(kickedStr) || []).length
+        return {
+          ...sess,
+          studentCount
+        }
+      })
+      
+      return countsList
+    }
+    return []
+  }
+
   try {
     const sessionsRef = collection(db, "sessions")
     const q = query(sessionsRef, where("teacherId", "==", teacherId))
@@ -529,6 +865,39 @@ export interface RosterStudent {
 
 // 16. Compile unique students roster across sessions
 export const getTeacherStudentsRoster = async (sessionCodes: string[]): Promise<RosterStudent[]> => {
+  if (!isFirebaseConfigured) {
+    const studentMap: Record<string, { name: string; count: number; totalScore: number }> = {}
+    if (typeof window !== "undefined") {
+      for (const code of sessionCodes) {
+        const studentsStr = localStorage.getItem(`mock_session_students_${code}`) || "[]"
+        try {
+          const students = JSON.parse(studentsStr)
+          students.forEach((s: any) => {
+            const name = s.name || "Unknown Student"
+            const nameKey = name.trim().toLowerCase()
+            const score = s.engagementScore || 0
+            
+            if (studentMap[nameKey]) {
+              studentMap[nameKey].count += 1
+              studentMap[nameKey].totalScore += score
+            } else {
+              studentMap[nameKey] = {
+                name,
+                count: 1,
+                totalScore: score
+              }
+            }
+          })
+        } catch {}
+      }
+    }
+    return Object.values(studentMap).map((std) => ({
+      name: std.name,
+      classesAttended: std.count,
+      avgEngagement: Math.floor(std.totalScore / std.count),
+    }))
+  }
+
   try {
     const studentMap: Record<string, { name: string; count: number; totalScore: number }> = {}
     
@@ -570,7 +939,3 @@ export const getTeacherStudentsRoster = async (sessionCodes: string[]): Promise<
     return []
   }
 }
-
-
-
-

@@ -15,6 +15,12 @@ const firebaseConfig = {
 // if the environment variables are not present. On the client side, the actual credentials will load.
 const hasApiKey = !!firebaseConfig.apiKey
 
+export const isFirebaseConfigured = !!(
+  firebaseConfig.apiKey &&
+  firebaseConfig.apiKey !== "your-api-key" &&
+  firebaseConfig.apiKey !== "AIzaSyDummyKeyForBuildSafetyOnly"
+)
+
 const activeConfig = hasApiKey
   ? firebaseConfig
   : {
@@ -33,3 +39,4 @@ export const db = getFirestore(app)
 export const googleProvider = new GoogleAuthProvider()
 
 googleProvider.setCustomParameters({ prompt: "select_account" })
+

@@ -1,18 +1,6 @@
-import https from "https";
-import dns from "dns";
 import { Message, TeacherOptions } from "./types";
 import { getTeacherConfig, getSystemPrompt } from "./config";
 import { defaultMemoryStore, DEFAULT_SESSION_ID } from "./memory";
-
-const globalAgent = (globalThis as any).teacherHttpsAgent || new https.Agent({
-  keepAlive: true,
-  keepAliveMsecs: 30000,
-  scheduling: "lifo",
-});
-
-if (process.env.NODE_ENV !== "production") {
-  (globalThis as any).teacherHttpsAgent = globalAgent;
-}
 
 /**
  * Basic input validation and prompt injection detection.
@@ -43,125 +31,12 @@ function sanitizeInput(text: string): string {
 }
 
 /**
- * Performs the actual HTTPS request to the NVIDIA NIM completions endpoint, streaming the response.
- */
-function performRequestStream(postDataBytes: Uint8Array, config: any, globalAgent: any, onComplete: (fullText: string) => void): ReadableStream {
-  let isClosed = false;
-  return new ReadableStream({
-    start(controller) {
-      const requestOptions: https.RequestOptions = {
-        hostname: "integrate.api.nvidia.com",
-        port: 443,
-        path: "/v1/chat/completions",
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.apiKey}`,
-          "Content-Length": postDataBytes.length,
-          Connection: "keep-alive",
-        },
-        timeout: 10000,
-        family: 4, // Force IPv4
-        agent: globalAgent,
-        servername: "integrate.api.nvidia.com",
-      };
-
-      const startTime = Date.now();
-      console.log(`[teacher] Sending stream request to model '${config.model}' via HTTPS...`);
-
-      let fullText = "";
-      let buffer = "";
-
-      const req = https.request(requestOptions, (res) => {
-        const elapsed = Date.now() - startTime;
-        console.log(`[teacher] First byte received in ${elapsed}ms. HTTP ${res.statusCode}`);
-
-        if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-          let errorBody = "";
-          res.on("data", chunk => errorBody += chunk);
-          res.on("end", () => {
-            if (!isClosed) {
-              console.error(`[teacher] NVIDIA API error ${res.statusCode}: ${errorBody}`);
-              controller.error(new Error(`NVIDIA API error ${res.statusCode}`));
-              isClosed = true;
-            }
-          });
-          return;
-        }
-
-        res.on("data", (chunk) => {
-          if (!isClosed) {
-            controller.enqueue(chunk); // Send raw SSE to client
-            
-            // Extract text for local memory
-            buffer += chunk.toString();
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-              if (line.startsWith("data: ") && !line.includes("[DONE]")) {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  if (data.choices?.[0]?.delta?.content) {
-                    fullText += data.choices[0].delta.content;
-                  }
-                } catch (e) {
-                  // Ignore partial json parse errors
-                }
-              }
-            }
-          }
-        });
-
-        res.on("end", () => {
-          if (!isClosed) {
-            controller.close();
-            isClosed = true;
-            onComplete(fullText);
-          }
-        });
-
-        res.on("error", (err) => {
-          if (!isClosed) {
-            console.error("[teacher] Stream read error:", err.message);
-            controller.error(err);
-            isClosed = true;
-          }
-        });
-      });
-
-      req.on("timeout", () => {
-        req.destroy();
-        if (!isClosed) {
-          console.error("[teacher] API request timed out after 60s");
-          controller.error(new Error("The AI Teacher request timed out."));
-          isClosed = true;
-        }
-      });
-
-      req.on("error", (err) => {
-        if (!isClosed) {
-          console.error("[teacher] Connection error:", err.message);
-          controller.error(err);
-          isClosed = true;
-        }
-      });
-
-      req.write(postDataBytes);
-      req.end();
-    },
-    cancel() {
-      isClosed = true;
-    }
-  });
-}
-
-/**
  * Ask the AI teacher a question. Supports session memory and difficulty level configurations.
- * Includes automatic retry for transient network connectivity errors.
+ * Uses standard fetch API for high compatibility with serverless environments like Vercel.
  *
  * @param question - The student's question.
  * @param options - Optional sessionId and difficulty level settings.
- * @returns The AI teacher's response.
+ * @returns The AI teacher's response stream.
  */
 export async function askTeacher(question: string, options?: TeacherOptions): Promise<ReadableStream> {
   const sanitizedQuestion = sanitizeInput(question);
@@ -171,7 +46,9 @@ export async function askTeacher(question: string, options?: TeacherOptions): Pr
 
   const config = getTeacherConfig();
   if (!config.apiKey) {
-    throw new Error("NVIDIA_API_KEY is not set. Setup .env.local to resolve.");
+    const topic = options?.state?.topic || "artificial intelligence";
+    const mockResponseText = getMockTeacherResponse(question, topic, level);
+    return createMockStream(mockResponseText);
   }
 
   // Retrieve session history
@@ -188,7 +65,7 @@ export async function askTeacher(question: string, options?: TeacherOptions): Pr
   // Dynamically generate the latest system prompt
   const systemPrompt = getSystemPrompt(level, options?.state, options?.transcript);
   
-  // Prepend system prompt to the API request payload, ensuring it always uses the latest context
+  // Prepend system prompt to the API request payload
   const apiMessages = [
     { role: "system", content: systemPrompt },
     ...history.map(msg => ({ role: msg.role, content: msg.content }))
@@ -200,16 +77,111 @@ export async function askTeacher(question: string, options?: TeacherOptions): Pr
     temperature: config.temperature,
     top_p: 0.7,
     max_tokens: config.maxTokens,
-    stream: true, // Force stream to true
+    stream: true,
   });
 
-  const postDataBytes = new TextEncoder().encode(postData);
+  console.log(`[teacher] Sending stream request to model '${config.model}' via fetch API...`);
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: postData,
+  });
 
-  // Return the ReadableStream directly (retries must be handled by the caller or we accept single-attempt streaming)
-  return performRequestStream(postDataBytes, config, globalAgent, async (fullText) => {
-    if (fullText && !options?.skipMemory) {
-      const assistantMessage: Message = { role: "assistant", content: fullText };
-      await defaultMemoryStore.addMessage(sessionKey, assistantMessage);
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error(`[teacher] NVIDIA API error ${response.status}: ${errText}`);
+    throw new Error(`NVIDIA API error ${response.status}: ${errText}`);
+  }
+
+  const stream = response.body;
+  if (!stream) {
+    throw new Error("No response stream returned from NVIDIA API");
+  }
+
+  // If memory is not skipped, we read the stream in the background to save the assistant's answer
+  if (!options?.skipMemory) {
+    const [clientStream, memoryStream] = stream.tee();
+    
+    (async () => {
+      try {
+        const reader = memoryStream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let fullText = "";
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          
+          for (const line of lines) {
+            if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.choices?.[0]?.delta?.content) {
+                  fullText += data.choices[0].delta.content;
+                }
+              } catch {}
+            }
+          }
+        }
+        
+        if (fullText) {
+          const assistantMessage: Message = { role: "assistant", content: fullText };
+          await defaultMemoryStore.addMessage(sessionKey, assistantMessage);
+        }
+      } catch (err) {
+        console.error("[teacher] Error parsing background memory stream:", err);
+      }
+    })();
+
+    return clientStream;
+  }
+
+  return stream;
+}
+
+function getMockTeacherResponse(question: string, topic?: string, level: string = "intermediate"): string {
+  const currentTopic = topic || "this topic";
+  const questionLower = question.toLowerCase();
+  
+  if (questionLower.includes("hello") || questionLower.includes("hi")) {
+    return `Hello class! Welcome to today's lecture. Let's make sure we are focused and ready to dive into ${currentTopic}. If you have questions as we go, just ask.`;
+  }
+  
+  if (questionLower.includes("doubt") || questionLower.includes("explain") || questionLower.includes("what is") || questionLower.includes("why")) {
+    return `That is an excellent question. When we think about the concept, we have to understand the fundamental principles. Let's break this down. First, the core concept relies on structuring our information. Secondly, we examine how it interacts with other modules. Lastly, we apply it to practical scenarios to optimize performance. Does this explanation help clarify things for you?`;
+  }
+  
+  // Default lecture speech
+  return `Now, let's explore ${currentTopic} in more depth. To understand this properly, think of it like building a house. First, you need a strong foundation of basic rules and parameters. Secondly, you add the structural components which define the core logic. Finally, you decorate it with custom styles and animations. Throughout this process, keeping our design clean and efficient is key. Let's look at the slides to visualize this concept.`;
+}
+
+function createMockStream(text: string): ReadableStream {
+  const words = text.split(" ");
+  let wordIndex = 0;
+  let interval: any;
+  return new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      interval = setInterval(() => {
+        if (wordIndex < words.length) {
+          const chunk = words[wordIndex] + (wordIndex < words.length - 1 ? " " : "");
+          controller.enqueue(encoder.encode(chunk));
+          wordIndex++;
+        } else {
+          clearInterval(interval);
+          controller.close();
+        }
+      }, 50); // send a word every 50ms
+    },
+    cancel() {
+      if (interval) clearInterval(interval);
     }
   });
 }

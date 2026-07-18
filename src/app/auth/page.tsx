@@ -35,6 +35,7 @@ export default function AuthPage() {
   const [success, setSuccess] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isFirebaseConfigured, setIsFirebaseConfigured] = useState(true)
+  const [isMockMode, setIsMockMode] = useState(false)
 
   // Handle URL query parameters for initial mode
   useEffect(() => {
@@ -58,15 +59,13 @@ export default function AuthPage() {
   // Check if Firebase is configured with real credentials on client mount
   useEffect(() => {
     const key = process.env.NEXT_PUBLIC_FIREBASE_API_KEY
-    if (
-      !key ||
-      key === "your-api-key" ||
-      key === "AIzaSyDummyKeyForBuildSafetyOnly"
-    ) {
-      setIsFirebaseConfigured(false)
-    } else {
-      setIsFirebaseConfigured(true)
-    }
+    const isConfigured = !!(
+      key &&
+      key !== "your-api-key" &&
+      key !== "AIzaSyDummyKeyForBuildSafetyOnly"
+    )
+    setIsFirebaseConfigured(true) // Always allow inputs/buttons to be enabled
+    setIsMockMode(!isConfigured)
   }, [])
 
   // Clear status on view switch
@@ -335,15 +334,15 @@ export default function AuthPage() {
               </button>
             </div>
 
-            {/* Configuration Warning Alert Banner */}
-            {!isFirebaseConfigured && tab === "teacher" && (
-              <div className="mb-6 rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800 animate-pulse-slow">
+            {/* Configuration Warning Alert Banner / Sandbox Info */}
+            {isMockMode && (
+              <div className="mb-6 rounded-xl bg-purple-50/50 border border-purple-200 p-4 text-sm text-purple-800 backdrop-blur-sm shadow-sm animate-pulse-slow">
                 <div className="flex gap-2 font-bold mb-1 items-center">
-                  <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0" />
-                  Firebase Credentials Required
+                  <AlertCircle className="h-4 w-4 text-purple-600 flex-shrink-0" />
+                  Running in Offline Sandbox Mode
                 </div>
-                <p className="text-xs leading-relaxed text-amber-700">
-                  Please duplicate the <code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono font-semibold">.env.local.example</code> file to <code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono font-semibold">.env.local</code> and fill in your Firebase API credentials.
+                <p className="text-xs leading-relaxed text-purple-700">
+                  No Firebase credentials detected. Running in simulated offline mode. You can sign in and test all features without any credentials!
                 </p>
               </div>
             )}
