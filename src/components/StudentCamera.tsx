@@ -81,7 +81,7 @@ export default function StudentCamera({
 
     const start = async () => {
       if (!videoRef.current) {
-        setTimeout(start, 500);
+        setTimeout(start, 30000);
         return;
       }
 
