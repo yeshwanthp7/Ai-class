@@ -311,7 +311,7 @@ export const updateStudentEngagement = async (
   sessionCode: string,
   studentId: string,
   score: number,
-  status: "focused" | "distracted" | "away" | "offline"
+  status: "focused" | "distracted" | "away" | "offline" | "sleeping" | "phone"
 ): Promise<void> => {
   try {
     const studentRef = doc(db, "sessions", sessionCode.trim().toUpperCase(), "students", studentId)
