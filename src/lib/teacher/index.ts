@@ -171,14 +171,19 @@ function createMockStream(text: string): ReadableStream {
       const encoder = new TextEncoder();
       interval = setInterval(() => {
         if (wordIndex < words.length) {
-          const chunk = words[wordIndex] + (wordIndex < words.length - 1 ? " " : "");
-          controller.enqueue(encoder.encode(chunk));
+          const word = words[wordIndex] + (wordIndex < words.length - 1 ? " " : "");
+          const sseLine = `data: ${JSON.stringify({
+            choices: [{ delta: { content: word } }]
+          })}\n\n`;
+          controller.enqueue(encoder.encode(sseLine));
           wordIndex++;
         } else {
+          // Send [DONE] line to match real SSE streaming behavior
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           clearInterval(interval);
           controller.close();
         }
-      }, 50); // send a word every 50ms
+      }, 60); // send a word every 60ms
     },
     cancel() {
       if (interval) clearInterval(interval);
