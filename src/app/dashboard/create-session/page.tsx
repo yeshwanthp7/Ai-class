@@ -95,7 +95,7 @@ export default function CreateSessionPage() {
       const createPromise = createSession(
         user.uid,
         cleanTitle,
-        "Document Study",
+        cleanTitle,
         "University",
         activeDuration,
         sessionType,

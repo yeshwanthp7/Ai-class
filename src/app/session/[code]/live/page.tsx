@@ -532,7 +532,10 @@ export default function LiveClassroomPage() {
           body: JSON.stringify({
             question: prompt,
             target: "teacher",
-            state: initialState
+            state: {
+              ...initialState,
+              currentSlideText: isPdfMode && pdfPages.length > 0 ? pdfPages[activeTopicIdx] : undefined
+            }
           })
         }).then(res => {
           if (!res.ok) throw new Error("Fetch failed");
@@ -648,7 +651,10 @@ export default function LiveClassroomPage() {
               body: JSON.stringify({
                 question: prompt,
                 target: "teacher",
-                state: lectureState
+                state: {
+                  ...lectureState,
+                  currentSlideText: isPdfMode && pdfPages.length > 0 ? pdfPages[idx] : undefined
+                }
               })
             })
           }
@@ -710,7 +716,11 @@ export default function LiveClassroomPage() {
                   body: JSON.stringify({
                     question: nextPrompt,
                     target: "teacher",
-                    state: { ...prefetchState, topic: nextItem }
+                    state: { 
+                      ...prefetchState, 
+                      topic: nextItem,
+                      currentSlideText: isPdfMode ? nextItem : undefined
+                    }
                   })
                 }).then(r => {
                   if (!r.ok) throw new Error("Prefetch failed");

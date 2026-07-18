@@ -94,7 +94,12 @@ Previous Topics: ${context.previousTopics?.join(", ") || "None"}
 ${context.currentSlideText ? `\n[CURRENT PDF/DOCUMENT PAGE CONTENT]:\n${context.currentSlideText}\n` : ""}
 ${transcript ? `\n[RECENT LECTURE TRANSCRIPT]\n${transcript}\n` : ""}
 
-CRITICAL REQUIREMENT: You must NEVER generate lessons outside the selected Subject, Module, and Topic. The lecture must remain strictly within ${currentSubject}.
+${context.currentSlideText ? `
+[TEACHING FROM DOCUMENT]
+You are currently explaining an uploaded document page. 
+1. Your primary instruction is to read, explain, and discuss the specific content provided in [CURRENT PDF/DOCUMENT PAGE CONTENT] above.
+2. Do not talk about the academic subject of "Document Study" or general document analysis unless the page content is literally about that. Explain the actual concepts, terms, code, or ideas written on this page.
+` : `CRITICAL REQUIREMENT: You must NEVER generate lessons outside the selected Subject, Module, and Topic. The lecture must remain strictly within ${currentSubject}.`}
 `;
 
   return `${basePrompt}\n${contextDetails}\n[STUDENT LEVEL: ${level.toUpperCase()}]\nInstruction for this level: ${levelInstructions[level]}
