@@ -617,47 +617,31 @@ export default function LiveClassroomPage() {
              });
           }
 
-          const cacheKey = `${sessionCode}_${sessionSubject}_${currentTopic}`;
-          const cached = prefetchedLectures.current[cacheKey];
-
           let res: Response | undefined;
 
-          if (cached && cached.fullText && retries === 0) {
-            console.log(`[Latency] Using fully cached text for ${cacheKey}`);
-            explanation = cached.fullText;
-            setTranscript(explanation);
-            speakTextChunk(explanation, onPlaybackEnd);
-            streamCompleted = true;
-            break;
-          } else if (cached && !cached.consumed && retries === 0) {
-            console.log(`[Latency] Using pre-fetched promise for stream ${cacheKey}`);
-            cachedTime = cached.time;
-            cached.consumed = true; // Mark as consumed so it isn't read twice
-            res = await cached.promise;
-          } else {
-            let prompt = isPdfMode 
-              ? `Please explain this page of the document: ${currentItem}` 
-              : `Please give a detailed lecture explanation for the current topic to the class: ${currentItem}`;
+          // Always fetch fresh to ensure real-time word-by-word streaming and transcript text visibility
+          let prompt = isPdfMode 
+            ? `Please explain this page of the document: ${currentItem}` 
+            : `Please give a detailed lecture explanation for the current topic to the class: ${currentItem}`;
 
-            if (explanation.length > 50) {
-               prompt = `${prompt}. Continue exactly from where you left off. Do not repeat what you already said. The last text generated was: "${explanation.slice(-100)}"`;
-            }
-
-            const { conversationHistory: _lh, ...lectureState } = classroomContext.getState();
-            res = await fetch("/api/ai", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              signal: abortController.signal,
-              body: JSON.stringify({
-                question: prompt,
-                target: "teacher",
-                state: {
-                  ...lectureState,
-                  currentSlideText: isPdfMode && pdfPages.length > 0 ? pdfPages[idx] : undefined
-                }
-              })
-            })
+          if (explanation.length > 50) {
+             prompt = `${prompt}. Continue exactly from where you left off. Do not repeat what you already said. The last text generated was: "${explanation.slice(-100)}"`;
           }
+
+          const { conversationHistory: _lh, ...lectureState } = classroomContext.getState();
+          res = await fetch("/api/ai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: abortController.signal,
+            body: JSON.stringify({
+              question: prompt,
+              target: "teacher",
+              state: {
+                ...lectureState,
+                currentSlideText: isPdfMode && pdfPages.length > 0 ? pdfPages[idx] : undefined
+              }
+            })
+          })
 
           if (res && res.ok && res.body) {
             const reader = res.body.getReader();
