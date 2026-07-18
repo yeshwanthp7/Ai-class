@@ -1581,7 +1581,7 @@ export default function LiveClassroomPage() {
             <div className="flex overflow-x-auto gap-3 pb-2 snap-x cscroll">
               {/* Local User Tile */}
               <div className={`w-48 md:w-64 lg:w-72 shrink-0 snap-center relative aspect-video rounded-xl border ${
-                localMetrics.status === "focused" || localMetrics.status === "active" ? "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" : 
+                localMetrics.status === "focused"  ? "border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" : 
                 localMetrics.status === "distracted" ? "border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.35)]" : 
                 localMetrics.status === "away" ? "border-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]" : 
                 localMetrics.status === "sleeping" ? "border-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)]" : 
