@@ -1016,7 +1016,10 @@ export default function LiveClassroomPage() {
           target: "doubt-chat",
           sessionId: sessionCode,
           studentId: studentId,
-          state: doubtState
+          state: {
+            ...doubtState,
+            currentSlideText: isPdfMode && pdfPages.length > 0 ? pdfPages[activeTopicIdx] : undefined
+          }
         })
       })
 

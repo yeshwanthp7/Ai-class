@@ -89,8 +89,9 @@ Module: ${context.module}
 Topic: ${context.topic}
 Lesson Goal: ${context.lessonGoal}
 Student Level: ${context.studentLevel}
-Current Progress: ${context.currentProgress}
+CurrentProgress: ${context.currentProgress}
 Previous Topics: ${context.previousTopics?.join(", ") || "None"}
+${context.currentSlideText ? `\n[CURRENT PDF/DOCUMENT PAGE CONTENT]:\n${context.currentSlideText}\n` : ""}
 ${transcript ? `\n[RECENT LECTURE TRANSCRIPT]\n${transcript}\n` : ""}
 
 CRITICAL REQUIREMENT: You must NEVER generate lessons outside the selected Subject, Module, and Topic. The lecture must remain strictly within ${currentSubject}.
