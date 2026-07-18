@@ -726,11 +726,6 @@ export default function LiveClassroomPage() {
                onPlaybackEnd();
             }
 
-            // Cache the fully resolved string for immediate playback if user returns to this topic
-            if (cached) {
-               cached.fullText = explanation;
-            }
-
           } else {
             throw new Error("Bad response from AI Server")
           }
